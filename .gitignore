@@ -1,3 +1,7 @@
 __pycache__/
 *.py[cod]
 *$py.class_pycache__
+.yolo/
+.env
+.vscode/
+.agents/

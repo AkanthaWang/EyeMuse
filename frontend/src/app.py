@@ -6,7 +6,7 @@ from typing import Optional
 import sys
 
 import cv2
-from PySide6.QtCore import QDateTime, QObject, QThread, QTimer, Qt, Signal, Property, QSize
+from PySide6.QtCore import QDateTime, QObject, QThread, QTimer, Qt, Signal, Property, QSize, Slot
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter, QPixmap, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,10 +27,16 @@ from PySide6.QtWidgets import (
 
 
 try:
-    from backend.app.modules.realtime_face_detection.service import MediaPipeFaceAnalyzer, MediaPipeFaceDetector
+    from backend.app.modules.realtime_face_detection.service import MediaPipeFaceAnalyzer, YOLOFaceDetector
 except Exception:  # pragma: no cover - optional runtime dependency path
     MediaPipeFaceAnalyzer = None
-    MediaPipeFaceDetector = None
+    YOLOFaceDetector = None
+
+try:
+    from backend.app.modules.llm import LLMClient, LLMClientError
+except Exception:  # pragma: no cover - optional runtime dependency path
+    LLMClient = None
+    LLMClientError = RuntimeError
 
 
 class PetMood(str, Enum):
@@ -54,6 +60,7 @@ class CameraWorker(QObject):
     status_changed = Signal(str)
     face_count_changed = Signal(int)
     analysis_changed = Signal(object)
+    open_failed = Signal(str)
 
     def __init__(self, camera_index: int = 0) -> None:
         super().__init__()
@@ -65,12 +72,21 @@ class CameraWorker(QObject):
         self._analyzer = None
         self._detector = None
 
+    @Slot()
     def start(self) -> None:
-        self._capture = cv2.VideoCapture(self._camera_index)
-        if not self._capture.isOpened():
-            self.status_changed.emit(f"无法打开摄像头 {self._camera_index}")
-            self._cleanup_capture()
+        if not self._open_capture():
             return
+
+        if YOLOFaceDetector is not None:
+            try:
+                self._detector = YOLOFaceDetector()
+            except Exception as exc:
+                self._detector = None
+                self.status_changed.emit(f"摄像头已开启，YOLO 面部检测不可用：{exc}")
+            else:
+                backend_name = getattr(self._detector, "backend_name", "unknown")
+                model_name = getattr(self._detector, "model_name", "unknown")
+                self.status_changed.emit(f"摄像头已开启，YOLO 面部检测已连接（{backend_name} / {model_name}）")
 
         if MediaPipeFaceAnalyzer is not None:
             try:
@@ -81,20 +97,12 @@ class CameraWorker(QObject):
             else:
                 self.status_changed.emit("摄像头已开启，压力分析已连接")
 
-        if self._analyzer is None and MediaPipeFaceDetector is not None:
-            try:
-                self._detector = MediaPipeFaceDetector()
-            except Exception as exc:
-                self._detector = None
-                self.status_changed.emit(f"摄像头已开启，面部检测不可用：{exc}")
-            else:
-                self.status_changed.emit("摄像头已开启，基础面部检测已连接")
-
-        if self._analyzer is None and self._detector is None:
-            self.status_changed.emit("摄像头已开启，未检测到面部检测模块")
+        if self._detector is None and self._analyzer is None:
+            self.status_changed.emit("摄像头已开启，但 YOLO 面部检测和压力分析都不可用。")
 
         self._timer.start()
 
+    @Slot()
     def stop(self) -> None:
         self._timer.stop()
         if self._analyzer is not None and hasattr(self._analyzer, "close"):
@@ -111,6 +119,30 @@ class CameraWorker(QObject):
             self._capture.release()
             self._capture = None
 
+    def _open_capture(self) -> bool:
+        backends: list[tuple[str, Optional[int]]] = [("default", None)]
+        if sys.platform.startswith("win"):
+            for backend_name in ("CAP_DSHOW", "CAP_MSMF"):
+                backend = getattr(cv2, backend_name, None)
+                if backend is not None:
+                    backends.append((backend_name, backend))
+
+        attempted_backends: list[str] = []
+        for backend_name, backend in backends:
+            attempted_backends.append(backend_name)
+            capture = cv2.VideoCapture(self._camera_index) if backend is None else cv2.VideoCapture(self._camera_index, backend)
+            if capture.isOpened():
+                self._capture = capture
+                return True
+            capture.release()
+
+        backend_text = ", ".join(attempted_backends)
+        message = f"无法打开摄像头 {self._camera_index}（已尝试后端：{backend_text}）"
+        self.status_changed.emit(message)
+        self.open_failed.emit(message)
+        self._cleanup_capture()
+        return False
+
     def _read_frame(self) -> None:
         if self._capture is None:
             return
@@ -122,11 +154,45 @@ class CameraWorker(QObject):
             return
 
         face_count = 0
+        annotated_frame = frame
+        emitted_analysis = False
+        detection_result = None
+
+        if self._detector is not None:
+            try:
+                detection_result = self._detector.detect(frame)
+                face_count = len(detection_result.regions)
+                annotated_frame = self._detector.annotate(frame, detection_result)
+                if self._analyzer is None:
+                    self.analysis_changed.emit(
+                        {
+                            "face_count": face_count,
+                            "stress_score": 0,
+                            "fatigue_score": 0,
+                            "dominant_signal": "none",
+                            "calibration_state": "unavailable",
+                            "calibration_progress": 0.0,
+                            "face_detected": bool(face_count),
+                        }
+                    )
+                    emitted_analysis = True
+            except Exception as exc:
+                self.status_changed.emit(f"YOLO 面部检测异常：{exc}")
+                if self._detector is not None and hasattr(self._detector, "close"):
+                    self._detector.close()
+                self._detector = None
+
         if self._analyzer is not None:
             try:
-                analysis_result = self._analyzer.detect(frame)
-                face_count = len(analysis_result.regions)
-                frame = self._analyzer.annotate(frame, analysis_result)
+                analysis_result = self._analyzer.detect(
+                    frame,
+                    detection_result.regions if detection_result is not None else None,
+                )
+                if analysis_result.face_detected:
+                    face_count = len(analysis_result.regions)
+                    annotated_frame = self._analyzer.annotate(frame, analysis_result)
+                elif self._detector is None:
+                    annotated_frame = self._analyzer.annotate(frame, analysis_result)
                 self.analysis_changed.emit(
                     {
                         "face_count": face_count,
@@ -138,38 +204,72 @@ class CameraWorker(QObject):
                         "face_detected": analysis_result.face_detected,
                     }
                 )
+                emitted_analysis = True
             except Exception as exc:
                 self.status_changed.emit(f"压力分析异常：{exc}")
                 if self._analyzer is not None and hasattr(self._analyzer, "close"):
                     self._analyzer.close()
                 self._analyzer = None
 
-        if self._analyzer is None and self._detector is not None:
-            try:
-                detection_result = self._detector.detect(frame)
-                face_count = len(detection_result.regions)
-                frame = self._detector.annotate(frame, detection_result)
-                self.analysis_changed.emit(
-                    {
-                        "face_count": face_count,
-                        "stress_score": 0,
-                        "fatigue_score": 0,
-                        "dominant_signal": "none",
-                        "calibration_state": "unavailable",
-                        "calibration_progress": 0.0,
-                        "face_detected": bool(face_count),
-                    }
-                )
-            except Exception as exc:
-                self.status_changed.emit(f"面部检测异常：{exc}")
-                self._detector = None
+        if not emitted_analysis:
+            self.analysis_changed.emit(
+                {
+                    "face_count": face_count,
+                    "stress_score": 0,
+                    "fatigue_score": 0,
+                    "dominant_signal": "none",
+                    "calibration_state": "unavailable",
+                    "calibration_progress": 0.0,
+                    "face_detected": bool(face_count),
+                }
+            )
 
         self.face_count_changed.emit(face_count)
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
         height, width, channels = rgb_frame.shape
         bytes_per_line = channels * width
         image = QImage(rgb_frame.data, width, height, bytes_per_line, QImage.Format_RGB888)
         self.frame_ready.emit(image.copy())
+
+
+class LLMStreamWorker(QObject):
+    chunk_received = Signal(str)
+    completed = Signal(str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        *,
+        llm_client,
+        user_text: str,
+        conversation_items: list[dict[str, str]],
+        context_summary: str,
+    ) -> None:
+        super().__init__()
+        self._llm_client = llm_client
+        self._user_text = user_text
+        self._conversation_items = conversation_items
+        self._context_summary = context_summary
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            chunks: list[str] = []
+            for chunk in self._llm_client.stream_reply(
+                user_text=self._user_text,
+                conversation_items=self._conversation_items,
+                context_summary=self._context_summary,
+            ):
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                self.chunk_received.emit(chunk)
+            final_text = "".join(chunks).strip()
+            if not final_text:
+                raise LLMClientError("LLM stream did not include assistant content.")
+            self.completed.emit(final_text)
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class PetAvatar(QWidget):
@@ -295,15 +395,28 @@ class EyeMuseWindow(QMainWindow):
         self.resize(1420, 920)
         self.setMinimumSize(1180, 760)
 
-        self._camera_thread: Optional[QThread] = None
         self._camera_worker: Optional[CameraWorker] = None
+        self._llm_thread: Optional[QThread] = None
+        self._llm_worker: Optional[LLMStreamWorker] = None
         self._conversation: list[ConversationItem] = []
         self._local_camera_enabled = False
         self._face_count = 0
+        self._llm_client = self._create_llm_client()
+        self._streaming_reply_index: Optional[int] = None
+        self._streaming_user_text: str = ""
 
         self._build_ui()
         self._apply_theme()
         self._append_system_message("EyeMuse 前端原型已就绪，输入文本或打开摄像头开始交互。")
+
+    @staticmethod
+    def _create_llm_client():
+        if LLMClient is None:
+            return None
+        try:
+            return LLMClient()
+        except Exception:
+            return None
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -641,6 +754,10 @@ class EyeMuseWindow(QMainWindow):
             self._append_system_message(text)
 
     def _handle_send(self) -> None:
+        if self._llm_thread is not None:
+            self.statusBar().showMessage("上一条回复仍在生成中。", 2500)
+            return
+
         text = self.message_input.text().strip()
         if not text:
             return
@@ -650,13 +767,95 @@ class EyeMuseWindow(QMainWindow):
         self._conversation.append(ConversationItem("user", text, self._now()))
         self._refresh_conversation()
 
-        reply = self._generate_reply(text)
+        if self._llm_client is not None and getattr(self._llm_client, "configured", False):
+            self._start_streaming_reply(text)
+            return
+
+        reply = self._generate_local_reply(text)
         self._set_mood(PetMood.responding, "正在生成本地回应。")
         self._conversation.append(ConversationItem("eyeMuse", reply, self._now()))
         self._refresh_conversation()
         self._set_mood(PetMood.idle, reply)
 
-    def _generate_reply(self, text: str) -> str:
+    def _start_streaming_reply(self, text: str) -> None:
+        if self._llm_client is None:
+            return
+
+        self._streaming_user_text = text
+        self._conversation.append(ConversationItem("eyeMuse", "", self._now()))
+        self._streaming_reply_index = len(self._conversation) - 1
+        self._refresh_conversation()
+        self._set_chat_busy(True)
+        self._set_mood(PetMood.responding, "正在流式生成回应。")
+        self.event_card.setValue("LLM 流式输出中")
+
+        self._llm_thread = QThread(self)
+        self._llm_worker = LLMStreamWorker(
+            llm_client=self._llm_client,
+            user_text=text,
+            conversation_items=[
+                {"role": item.role, "text": item.text}
+                for item in self._conversation[-12:]
+            ],
+            context_summary=self._current_summary(),
+        )
+        self._llm_worker.moveToThread(self._llm_thread)
+        self._llm_thread.started.connect(self._llm_worker.run)
+        self._llm_worker.chunk_received.connect(self._append_stream_chunk)
+        self._llm_worker.completed.connect(self._finish_streaming_reply)
+        self._llm_worker.failed.connect(self._handle_streaming_error)
+        self._llm_thread.finished.connect(self._llm_worker.deleteLater)
+        self._llm_thread.finished.connect(self._llm_thread.deleteLater)
+        self._llm_thread.start()
+
+    def _append_stream_chunk(self, chunk: str) -> None:
+        if self._streaming_reply_index is None or not chunk:
+            return
+        self._conversation[self._streaming_reply_index].text += chunk
+        self._refresh_conversation()
+        self.event_card.setValue("LLM 流式输出中")
+
+    def _finish_streaming_reply(self, final_text: str) -> None:
+        if self._streaming_reply_index is not None:
+            self._conversation[self._streaming_reply_index].text = final_text or self._conversation[self._streaming_reply_index].text
+        self._refresh_conversation()
+        self._set_mood(PetMood.idle, final_text or "回复已完成。")
+        self._teardown_streaming_reply()
+
+    def _handle_streaming_error(self, message: str) -> None:
+        partial = ""
+        if self._streaming_reply_index is not None:
+            partial = self._conversation[self._streaming_reply_index].text.strip()
+
+        if self._streaming_reply_index is not None and not partial:
+            fallback = self._generate_local_reply(self._streaming_user_text)
+            self._conversation[self._streaming_reply_index].text = fallback
+            self._set_mood(PetMood.idle, fallback)
+        elif self._streaming_reply_index is not None:
+            self._conversation[self._streaming_reply_index].text += "\n\n[回复中断]"
+            self._set_mood(PetMood.alert, "流式回复中断。")
+
+        self.event_card.setValue(f"LLM 回退到本地回复：{message}")
+        self.camera_note.setText(f"LLM 流式调用异常：{message}")
+        self._refresh_conversation()
+        self._teardown_streaming_reply()
+
+    def _teardown_streaming_reply(self) -> None:
+        if self._llm_thread is not None:
+            self._llm_thread.quit()
+            self._llm_thread.wait(1500)
+        self._llm_thread = None
+        self._llm_worker = None
+        self._streaming_reply_index = None
+        self._streaming_user_text = ""
+        self._set_chat_busy(False)
+
+    def _set_chat_busy(self, busy: bool) -> None:
+        self.message_input.setEnabled(not busy)
+        self.send_button.setEnabled(not busy)
+        self.clear_button.setEnabled(not busy)
+
+    def _generate_local_reply(self, text: str) -> str:
         lowered = text.lower()
         if any(keyword in lowered for keyword in ("累", "困", "疲劳", "休息", "sleep", "tired")):
             return "我注意到你可能有些疲劳。先休息几分钟，等你缓一缓我再陪你。"
@@ -693,24 +892,22 @@ class EyeMuseWindow(QMainWindow):
         self._append_system_message("会话已清空。")
 
     def _toggle_camera(self, state: int) -> None:
-        if state == Qt.Checked:
+        if Qt.CheckState(state) == Qt.CheckState.Checked:
             self._start_camera()
         else:
             self._stop_camera()
 
     def _start_camera(self) -> None:
-        if self._camera_thread is not None:
+        if self._camera_worker is not None:
             return
 
-        self._camera_thread = QThread(self)
         self._camera_worker = CameraWorker()
-        self._camera_worker.moveToThread(self._camera_thread)
-        self._camera_thread.started.connect(self._camera_worker.start)
         self._camera_worker.frame_ready.connect(self._update_camera_frame)
         self._camera_worker.status_changed.connect(self._update_camera_status)
         self._camera_worker.face_count_changed.connect(self._update_face_count)
         self._camera_worker.analysis_changed.connect(self._update_analysis_metrics)
-        self._camera_thread.start()
+        self._camera_worker.open_failed.connect(self._handle_camera_open_failed)
+        self._camera_worker.start()
 
         self._local_camera_enabled = True
         self.camera_card.setValue("开启中")
@@ -724,23 +921,37 @@ class EyeMuseWindow(QMainWindow):
     def _stop_camera(self) -> None:
         if self._camera_worker is not None:
             self._camera_worker.stop()
-        if self._camera_thread is not None:
-            self._camera_thread.quit()
-            self._camera_thread.wait(1500)
-            self._camera_thread.deleteLater()
-        self._camera_thread = None
         self._camera_worker = None
+        self._reset_camera_ui()
+        self._set_mood(PetMood.idle, "摄像头已关闭。")
+
+    def _handle_camera_open_failed(self, message: str) -> None:
+        self._camera_worker = None
+        self._reset_camera_ui(status=message, inline_status="异常", note=message)
+        self._set_mood(PetMood.alert, message)
+
+        self.camera_toggle.blockSignals(True)
+        self.camera_toggle.setChecked(False)
+        self.camera_toggle.blockSignals(False)
+
+    def _reset_camera_ui(
+        self,
+        *,
+        status: str = "关闭",
+        inline_status: str = "关闭",
+        note: Optional[str] = None,
+    ) -> None:
         self._local_camera_enabled = False
         self._face_count = 0
         self.camera_preview.setPixmap(QPixmap())
         self.camera_preview.setText("摄像头未开启")
-        self.camera_card.setValue("关闭")
-        self.camera_status.setText("关闭")
+        self.camera_card.setValue(status)
+        self.camera_status.setText(inline_status)
+        self.camera_note.setText(note or "权限提示、失败提示和降级路径都先保留在界面上。")
         self.face_card.setValue("0 个面部")
         self.stress_card.setValue("未开始检测")
         self.fatigue_card.setValue("未开始检测")
         self.analysis_card.setValue("等待开始")
-        self._set_mood(PetMood.idle, "摄像头已关闭。")
 
     def _update_camera_frame(self, image: QImage) -> None:
         pixmap = QPixmap.fromImage(image)
@@ -749,11 +960,11 @@ class EyeMuseWindow(QMainWindow):
         self.camera_preview.setText("")
 
     def _update_camera_status(self, message: str) -> None:
-        self.camera_status.setText("异常" if any(flag in message for flag in ("失败", "无法", "异常")) else "开启")
+        self.camera_status.setText("异常" if any(flag in message for flag in ("失败", "无法", "异常", "不可用")) else "开启")
         self.camera_card.setValue(message)
         self.camera_note.setText(message)
         self.event_card.setValue(message)
-        if any(flag in message for flag in ("失败", "无法", "异常")):
+        if any(flag in message for flag in ("失败", "无法", "异常", "不可用")):
             self._set_mood(PetMood.alert, message)
 
     def _update_face_count(self, count: int) -> None:
@@ -800,8 +1011,12 @@ class EyeMuseWindow(QMainWindow):
             self.event_card.setValue("基础面部框选")
         else:
             self.analysis_card.setValue("等待面部")
-            self.camera_note.setText("等待检测到面部后开始分析。")
-            self.event_card.setValue("等待面部")
+            if face_count > 0:
+                self.camera_note.setText("已检测到人脸，等待 MediaPipe 关键点稳定后开始分析。")
+                self.event_card.setValue("已检测到人脸，等待关键点稳定")
+            else:
+                self.camera_note.setText("等待检测到面部后开始分析。")
+                self.event_card.setValue("等待面部")
 
     def _current_summary(self) -> str:
         camera_state = "开启" if self._local_camera_enabled else "关闭"
@@ -812,6 +1027,8 @@ class EyeMuseWindow(QMainWindow):
         return QDateTime.currentDateTime().toString("hh:mm:ss")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._llm_thread is not None:
+            self._teardown_streaming_reply()
         self._stop_camera()
         super().closeEvent(event)
 

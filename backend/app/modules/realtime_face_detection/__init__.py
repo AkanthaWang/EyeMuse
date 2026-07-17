@@ -1,17 +1,13 @@
-from .service import (
-    FaceAnalysisResult,
-    FaceDetectionResult,
-    FaceRegion,
-    MediaPipeFaceAnalyzer,
-    MediaPipeFaceDetector,
-    preview_camera,
-)
+from .common import FaceAnalysisResult, FaceDetectionResult, FaceRegion
+from .mediapipe_analyzer import MediaPipeFaceAnalyzer
+from .service import preview_camera
+from .yolo_detector import YOLOFaceDetector
 
 __all__ = [
     "FaceAnalysisResult",
     "FaceDetectionResult",
     "FaceRegion",
     "MediaPipeFaceAnalyzer",
-    "MediaPipeFaceDetector",
+    "YOLOFaceDetector",
     "preview_camera",
 ]
