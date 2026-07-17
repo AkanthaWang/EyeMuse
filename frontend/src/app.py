@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -7,7 +7,7 @@ import sys
 
 import cv2
 from PySide6.QtCore import QDateTime, QObject, QThread, QTimer, Qt, Signal, Property, QSize, Slot
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter, QPixmap, QPalette
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QMovie, QPainter, QPixmap, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -272,102 +272,160 @@ class LLMStreamWorker(QObject):
             self.failed.emit(str(exc))
 
 
-class PetAvatar(QWidget):
+# class PetAvatar(QWidget):
+#     def __init__(self, parent: Optional[QWidget] = None) -> None:
+#         super().__init__(parent)
+#         self._mood = PetMood.idle
+#         self._breath = 0.0
+#         self._timer = QTimer(self)
+#         self._timer.setInterval(32)
+#         self._timer.timeout.connect(self._tick)
+#         self._timer.start()
+#         self.setMinimumSize(320, 320)
+#         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+#     def setMood(self, mood: PetMood) -> None:
+#         if self._mood == mood:
+#             return
+#         self._mood = mood
+#         self.update()
+
+#     def mood(self) -> PetMood:
+#         return self._mood
+
+#     mood = Property(str, mood, setMood)
+
+#     def _tick(self) -> None:
+#         self._breath += 0.045
+#         if self._breath > 6.28318:
+#             self._breath = 0.0
+#         self.update()
+
+#     def paintEvent(self, event) -> None:  # noqa: N802
+#         del event
+#         painter = QPainter(self)
+#         painter.setRenderHint(QPainter.Antialiasing)
+#         painter.fillRect(self.rect(), QColor("#111827"))
+
+#         width = self.width()
+#         height = self.height()
+#         breath_offset = int(8 * (1 + (self._breath % 3.14159) / 3.14159))
+
+#         body_w = int(width * 0.56)
+#         body_h = int(height * 0.56)
+#         body_x = (width - body_w) // 2
+#         body_y = (height - body_h) // 2 + breath_offset // 2
+
+#         mood_colors = {
+#             PetMood.idle: (QColor("#7dd3fc"), QColor("#0f172a")),
+#             PetMood.listening: (QColor("#34d399"), QColor("#052e16")),
+#             PetMood.thinking: (QColor("#fbbf24"), QColor("#3b2f0a")),
+#             PetMood.responding: (QColor("#60a5fa"), QColor("#1e3a8a")),
+#             PetMood.alert: (QColor("#fb7185"), QColor("#4c0519")),
+#             PetMood.offline: (QColor("#94a3b8"), QColor("#1e293b")),
+#         }
+#         accent, shadow = mood_colors[self._mood]
+
+#         painter.setPen(Qt.NoPen)
+#         painter.setBrush(QColor(15, 23, 42, 180))
+#         painter.drawRoundedRect(body_x + 12, body_y + 16, body_w, body_h, 36, 36)
+
+#         painter.setBrush(accent)
+#         painter.drawRoundedRect(body_x, body_y, body_w, body_h, 36, 36)
+
+#         painter.setBrush(QColor(255, 255, 255, 220))
+#         eye_y = body_y + int(body_h * 0.38)
+#         eye_left_x = body_x + int(body_w * 0.31)
+#         eye_right_x = body_x + int(body_w * 0.61)
+#         eye_w = int(body_w * 0.09)
+#         eye_h = int(body_h * 0.10)
+#         if self._mood == PetMood.alert:
+#             eye_h = max(4, eye_h // 2)
+#         painter.drawEllipse(eye_left_x, eye_y, eye_w, eye_h)
+#         painter.drawEllipse(eye_right_x, eye_y, eye_w, eye_h)
+
+#         if self._mood in {PetMood.thinking, PetMood.responding}:
+#             mouth_w = int(body_w * 0.18)
+#             mouth_h = 5
+#             mouth_x = body_x + (body_w - mouth_w) // 2
+#             mouth_y = body_y + int(body_h * 0.66)
+#             painter.setBrush(shadow)
+#             painter.drawRoundedRect(mouth_x, mouth_y, mouth_w, mouth_h, 3, 3)
+#         elif self._mood == PetMood.listening:
+#             mouth_w = int(body_w * 0.15)
+#             mouth_h = int(body_h * 0.04)
+#             mouth_x = body_x + (body_w - mouth_w) // 2
+#             mouth_y = body_y + int(body_h * 0.66)
+#             painter.setBrush(QColor(255, 255, 255, 220))
+#             painter.drawRoundedRect(mouth_x, mouth_y, mouth_w, mouth_h, 5, 5)
+#         elif self._mood == PetMood.alert:
+#             painter.setBrush(QColor("#fff1f2"))
+#             painter.drawEllipse(body_x + int(body_w * 0.45), body_y + int(body_h * 0.64), int(body_w * 0.08), int(body_h * 0.08))
+
+#         ear_w = int(body_w * 0.18)
+#         ear_h = int(body_h * 0.15)
+#         painter.setBrush(accent.lighter(120))
+#         painter.drawRoundedRect(body_x + int(body_w * 0.08), body_y - ear_h // 2, ear_w, ear_h, 18, 18)
+#         painter.drawRoundedRect(body_x + int(body_w * 0.74), body_y - ear_h // 2, ear_w, ear_h, 18, 18)
+class PetAvatar(QLabel):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._mood = PetMood.idle
-        self._breath = 0.0
-        self._timer = QTimer(self)
-        self._timer.setInterval(32)
-        self._timer.timeout.connect(self._tick)
-        self._timer.start()
+        self._movie: Optional[QMovie] = None
         self.setMinimumSize(320, 320)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setAlignment(Qt.AlignCenter)
+
+        self._asset_dir = Path(__file__).resolve().parents[1] / "assets"
+        self._mood_assets = {
+            PetMood.idle: "idle.gif",
+            PetMood.listening: "listening.gif",
+            PetMood.thinking: "thinking.gif",
+            PetMood.responding: "responding.gif",
+            PetMood.alert: "alert.gif",
+            PetMood.offline: "offline.gif",
+        }
+
+        self.setStyleSheet(
+            "background: rgba(17, 24, 39, 0.92);"
+            "border-radius: 24px;"
+        )
+        self.setMood(PetMood.idle)
 
     def setMood(self, mood: PetMood) -> None:
-        if self._mood == mood:
+        if self._mood == mood and self._movie is not None:
             return
+
         self._mood = mood
-        self.update()
+        file_name = self._mood_assets.get(mood, "idle.gif")
+        asset_path = self._asset_dir / file_name
 
-    def mood(self) -> PetMood:
-        return self._mood
+        if not asset_path.exists():
+            fallback_path = self._asset_dir / "idle.gif"
+            if fallback_path.exists():
+                asset_path = fallback_path
+            else:
+                if self._movie is not None:
+                    self._movie.stop()
+                    self._movie = None
+                    self.setMovie(None)
+                self.setText(f"缺少素材: {file_name}")
+                return
 
-    mood = Property(str, mood, setMood)
+        if self._movie is not None:
+            self._movie.stop()
 
-    def _tick(self) -> None:
-        self._breath += 0.045
-        if self._breath > 6.28318:
-            self._breath = 0.0
-        self.update()
+        self._movie = QMovie(str(asset_path))
+        self._movie.setCacheMode(QMovie.CacheAll)
+        self._movie.setScaledSize(self.size())
+        self.setMovie(self._movie)
+        self._movie.start()
+        self.setText("")
 
-    def paintEvent(self, event) -> None:  # noqa: N802
-        del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#111827"))
-
-        width = self.width()
-        height = self.height()
-        breath_offset = int(8 * (1 + (self._breath % 3.14159) / 3.14159))
-
-        body_w = int(width * 0.56)
-        body_h = int(height * 0.56)
-        body_x = (width - body_w) // 2
-        body_y = (height - body_h) // 2 + breath_offset // 2
-
-        mood_colors = {
-            PetMood.idle: (QColor("#7dd3fc"), QColor("#0f172a")),
-            PetMood.listening: (QColor("#34d399"), QColor("#052e16")),
-            PetMood.thinking: (QColor("#fbbf24"), QColor("#3b2f0a")),
-            PetMood.responding: (QColor("#60a5fa"), QColor("#1e3a8a")),
-            PetMood.alert: (QColor("#fb7185"), QColor("#4c0519")),
-            PetMood.offline: (QColor("#94a3b8"), QColor("#1e293b")),
-        }
-        accent, shadow = mood_colors[self._mood]
-
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(15, 23, 42, 180))
-        painter.drawRoundedRect(body_x + 12, body_y + 16, body_w, body_h, 36, 36)
-
-        painter.setBrush(accent)
-        painter.drawRoundedRect(body_x, body_y, body_w, body_h, 36, 36)
-
-        painter.setBrush(QColor(255, 255, 255, 220))
-        eye_y = body_y + int(body_h * 0.38)
-        eye_left_x = body_x + int(body_w * 0.31)
-        eye_right_x = body_x + int(body_w * 0.61)
-        eye_w = int(body_w * 0.09)
-        eye_h = int(body_h * 0.10)
-        if self._mood == PetMood.alert:
-            eye_h = max(4, eye_h // 2)
-        painter.drawEllipse(eye_left_x, eye_y, eye_w, eye_h)
-        painter.drawEllipse(eye_right_x, eye_y, eye_w, eye_h)
-
-        if self._mood in {PetMood.thinking, PetMood.responding}:
-            mouth_w = int(body_w * 0.18)
-            mouth_h = 5
-            mouth_x = body_x + (body_w - mouth_w) // 2
-            mouth_y = body_y + int(body_h * 0.66)
-            painter.setBrush(shadow)
-            painter.drawRoundedRect(mouth_x, mouth_y, mouth_w, mouth_h, 3, 3)
-        elif self._mood == PetMood.listening:
-            mouth_w = int(body_w * 0.15)
-            mouth_h = int(body_h * 0.04)
-            mouth_x = body_x + (body_w - mouth_w) // 2
-            mouth_y = body_y + int(body_h * 0.66)
-            painter.setBrush(QColor(255, 255, 255, 220))
-            painter.drawRoundedRect(mouth_x, mouth_y, mouth_w, mouth_h, 5, 5)
-        elif self._mood == PetMood.alert:
-            painter.setBrush(QColor("#fff1f2"))
-            painter.drawEllipse(body_x + int(body_w * 0.45), body_y + int(body_h * 0.64), int(body_w * 0.08), int(body_h * 0.08))
-
-        ear_w = int(body_w * 0.18)
-        ear_h = int(body_h * 0.15)
-        painter.setBrush(accent.lighter(120))
-        painter.drawRoundedRect(body_x + int(body_w * 0.08), body_y - ear_h // 2, ear_w, ear_h, 18, 18)
-        painter.drawRoundedRect(body_x + int(body_w * 0.74), body_y - ear_h // 2, ear_w, ear_h, 18, 18)
-
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._movie is not None:
+            self._movie.setScaledSize(self.size())
 
 class StatCard(QFrame):
     def __init__(self, title: str, value: str, parent: Optional[QWidget] = None) -> None:
