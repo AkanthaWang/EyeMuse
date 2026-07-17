@@ -1,0 +1,8 @@
+numpy<2
+opencv-python
+PySide6
+torch
+torchvision
+ultralytics
+mediapipe
+tensorflow
