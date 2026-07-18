@@ -88,6 +88,24 @@ EyeMuse/
 + `backend/app/modules/llm/client.py`
   封装 LLM 调用，读取 `.env` 中的模型配置，按 OpenAI 兼容的 `chat/completions` 接口进行流式请求。
 
+### 新增功能补充
+
++ `backend/app/modules/rppg/processor.py`
+  新增基于 MediaPipe ROI + POS 算法的 rPPG 处理模块，用于从面部时序信号中估计 `HEART RATE`、`RESPIRATION`、`HRV`、`SNR` 与 `rPPG progress`。
+
++ `backend/app/modules/dashboard_data/repository.py`
+  新增本地历史数据聚合模块，用于支撑可视化分析页、日报、周报与自定义时间区间报告。
+
++ `frontend/src/app.py`
+  新增并整合了以下前端能力：
+  1. 人脸关键点轮廓展示。
+  2. `HEART RATE`、`RESPIRATION`、`HRV` 指标卡片展示。
+  3. 可视化分析大屏与健康报告页面。
+  4. 基于一段时间均值与阈值的宠物状态切换逻辑。
+
++ `frontend/assets/vendor/echarts.min.js`
+  新增本地图表资源，保证可视化大屏在无外网环境下也能正常加载。
+
 ### 当前能力状态
 
 + 文本对话：已接入大模型调用。
@@ -96,6 +114,10 @@ EyeMuse/
 + 人脸检测：已切换为 YOLO 预训练模型做人脸检测。
 + 面部分析：已使用 MediaPipe 做关键点与 blendshape 分析。
 + 状态评估：在检测到稳定人脸并完成基线校准后，展示压力估计与疲劳状态分数。
++ 关键点可视化：前端已叠加显示人脸关键点轮廓，便于观察关键点跟踪稳定性。
++ 生理指标分析：前端已展示 `HEART RATE`、`RESPIRATION`、`HRV`，并由后端 rPPG 模块持续更新。
++ 宠物状态机：`idle / listening / thinking / responding / alert / offline` 不再依赖单帧数值，而是基于最近一段时间的均值与阈值平滑切换。
++ 历史可视化：已支持可视化分析大屏、日报、周报与自定义时间区间报告。
 
 ### 当前交互链路
 
@@ -104,6 +126,15 @@ EyeMuse/
 
 + 视觉链路
   摄像头取帧 -> YOLO 输出人脸框 -> 使用脸框裁剪/辅助 MediaPipe 分析 -> 生成 `face_count`、`stress_score`、`fatigue_score` -> 前端卡片与提示文案同步刷新。
+
++ rPPG 链路
+  摄像头取帧 -> MediaPipe 提供稳定关键点与 ROI -> POS 算法提取脉搏波形 -> 输出 `heart_rate`、`respiration_rate`、`hrv` -> 前端卡片、宠物状态与提示文案同步更新。
+
++ 状态决策链路
+  压力估计、疲劳状态、`HEART RATE`、`RESPIRATION`、`HRV` -> 进入滑动时间窗口求均值 -> 与预设阈值比较 -> 切换 `idle / listening / thinking / responding / alert / offline`。
+
++ 历史分析链路
+  实时状态结果 -> `dashboard_data` 写入本地 SQLite -> 聚合日 / 周 / 月 / 自定义区间数据 -> 驱动可视化分析页与 Markdown 健康报告。
 
 ### 运行方式
 
@@ -144,6 +175,9 @@ MODEL_APIKEY=your_api_key
 + `backend/app/weights/face_landmarker_v2_with_blendshapes.task`
   MediaPipe Face Landmarker 模型文件，用于关键点与 blendshape 分析。
 
++ rPPG 说明
+  当前 rPPG POS 实现不额外依赖新的深度学习权重，直接复用现有 MediaPipe 人脸关键点结果进行 ROI 采样与时序计算。
+
 ### 环境安装
 
 项目根目录已补充 `requirements.txt`，推荐直接安装：
@@ -156,7 +190,9 @@ pip install -r .\requirements.txt
 ### 当前限制与说明
 
 + 压力估计和疲劳状态不是单独模型推理结果，而是基于 MediaPipe blendshape 信号做的规则估计。
++ `HEART RATE`、`RESPIRATION`、`HRV` 来自 rPPG 时序估计，受光照、头动、遮挡、帧率稳定性影响较大，仅用于交互反馈与趋势观察，不应视作医疗结果。
 + 当 YOLO 能检测到脸，但 MediaPipe 尚未完成稳定关键点分析时，前端可能先显示“检测到面部”，但压力/疲劳仍处于等待或校准中。
++ 宠物状态切换已改为“时间窗口均值 + 阈值”方式，因此状态变化会比单帧判断更平滑，但也会有一定缓冲时间。
 + 当 LLM 流式调用失败时，界面会显示“LLM 回退到本地回复”，这是当前的兜底机制，不代表程序崩溃。
 
 
@@ -167,5 +203,4 @@ pip install -r .\requirements.txt
 + https://github.com/HanLoney/OpenDesktop-Pet
 + https://github.com/CanFlyhang/Desktop-Pixel-Pet/tree/main - 宠物形象像素风
 + https://github.com/cjz-wr/DesktopPetByAi
-
 + https://blog.csdn.net/guyuealian/article/details/131718648 - 疲劳检测数据集

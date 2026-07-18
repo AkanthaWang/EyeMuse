@@ -36,6 +36,12 @@ class FaceAnalysisResult:
     calibration_state: str
     calibration_progress: float
     baseline: Optional[Dict[str, float]]
+    heart_rate: Optional[float]
+    respiration_rate: Optional[float]
+    hrv: Optional[float]
+    snr: Optional[float]
+    rppg_progress: float
+    rppg_signal: List[float]
 
 
 ZEROED_SIGNALS = {

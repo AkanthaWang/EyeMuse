@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from time import time
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
 
+from ..rppg import POSRPPGProcessor, extract_forehead_rgb
 from .common import (
     FaceAnalysisResult,
     FaceRegion,
@@ -17,10 +19,35 @@ from .common import (
 )
 
 
+_LANDMARK_CONTOURS: tuple[tuple[int, ...], ...] = (
+    (10, 109, 67, 103, 54, 21, 162, 127, 234, 93, 132, 58, 172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365, 397, 288, 361, 323, 454, 356, 389, 251, 284, 332, 297, 338, 10),
+    (70, 63, 105, 66, 107),
+    (336, 296, 334, 293, 300),
+    (33, 160, 158, 133, 153, 144, 33),
+    (362, 385, 387, 263, 373, 380, 362),
+    (168, 6, 197, 195, 5, 4),
+    (61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291),
+    (78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308),
+)
+
+
 def _resolve_model_path(model_path: Optional[str] = None) -> Path:
     if model_path:
         return Path(model_path).expanduser().resolve()
     return Path(__file__).resolve().parents[2] / "weights" / "face_landmarker_v2_with_blendshapes.task"
+
+
+@dataclass(frozen=True)
+class _FaceObservation:
+    region: FaceRegion
+    landmarks: Sequence
+    blendshapes: Optional[Sequence]
+
+
+@dataclass(frozen=True)
+class _NormalizedLandmark:
+    x: float
+    y: float
 
 
 class MediaPipeFaceAnalyzer:
@@ -34,6 +61,7 @@ class MediaPipeFaceAnalyzer:
         min_face_detection_confidence: float = 0.5,
         min_face_presence_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
+        rppg_fps: int = 30,
     ) -> None:
         try:
             import cv2
@@ -60,6 +88,10 @@ class MediaPipeFaceAnalyzer:
         self._calibration_samples: List[Dict[str, float]] = []
         self._baseline_signals: Optional[Dict[str, float]] = None
         self._last_analysis: Optional[FaceAnalysisResult] = None
+        self._last_observations: List[_FaceObservation] = []
+        self._rppg_processor = POSRPPGProcessor(fps=rppg_fps)
+        self._rppg_missing_frames = 0
+        self._rppg_reset_after_missing_frames = max(5, int(rppg_fps * 1.5))
 
         options = vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(self._model_path)),
@@ -78,24 +110,48 @@ class MediaPipeFaceAnalyzer:
         mp_image = self._Image(image_format=self._ImageFormat.SRGB, data=frame_rgb)
         return self._landmarker.detect(mp_image)
 
-    def _collect_full_frame_regions(self, frame_bgr) -> Tuple[List[FaceRegion], List]:
+    def _normalize_landmarks_to_frame(
+        self,
+        landmarks: Sequence,
+        *,
+        frame_width: int,
+        frame_height: int,
+        source_width: int,
+        source_height: int,
+        offset_x: int = 0,
+        offset_y: int = 0,
+    ) -> list[_NormalizedLandmark]:
+        normalized_landmarks: list[_NormalizedLandmark] = []
+        for landmark in landmarks:
+            x = (offset_x + (landmark.x * source_width)) / float(frame_width)
+            y = (offset_y + (landmark.y * source_height)) / float(frame_height)
+            normalized_landmarks.append(_NormalizedLandmark(x=x, y=y))
+        return normalized_landmarks
+
+    def _collect_full_frame_observations(self, frame_bgr) -> List[_FaceObservation]:
         frame_height, frame_width = frame_bgr.shape[:2]
         result = self._detect_landmarks(frame_bgr)
-        regions: List[FaceRegion] = []
-        for landmarks in result.face_landmarks or []:
+        observations: List[_FaceObservation] = []
+        blendshape_sets = list(result.face_blendshapes or [])
+        for index, landmarks in enumerate(result.face_landmarks or []):
             region = landmarks_to_region(landmarks, frame_width, frame_height)
             if region is not None:
-                regions.append(region)
-        return regions, list(result.face_blendshapes or [])
+                observations.append(
+                    _FaceObservation(
+                        region=region,
+                        landmarks=landmarks,
+                        blendshapes=blendshape_sets[index] if index < len(blendshape_sets) else None,
+                    )
+                )
+        return observations
 
-    def _collect_guided_regions(
+    def _collect_guided_observations(
         self,
         frame_bgr,
         candidate_regions: Sequence[FaceRegion],
-    ) -> Tuple[List[FaceRegion], List]:
+    ) -> List[_FaceObservation]:
         frame_height, frame_width = frame_bgr.shape[:2]
-        regions: List[FaceRegion] = []
-        blendshapes = []
+        observations: List[_FaceObservation] = []
 
         for candidate in candidate_regions[: self._max_num_faces]:
             cropped_frame, offset_x, offset_y = crop_frame_to_region(frame_bgr, candidate)
@@ -107,7 +163,8 @@ class MediaPipeFaceAnalyzer:
             if not local_landmarks:
                 continue
 
-            for landmarks in local_landmarks[:1]:
+            blendshape_sets = list(result.face_blendshapes or [])
+            for index, landmarks in enumerate(local_landmarks[:1]):
                 region = landmarks_to_region(
                     landmarks,
                     frame_width,
@@ -118,12 +175,67 @@ class MediaPipeFaceAnalyzer:
                     offset_y=offset_y,
                 )
                 if region is not None:
-                    regions.append(region)
-            blendshapes = list(result.face_blendshapes or [])
-            if regions:
+                    observations.append(
+                        _FaceObservation(
+                            region=region,
+                            landmarks=self._normalize_landmarks_to_frame(
+                                landmarks,
+                                frame_width=frame_width,
+                                frame_height=frame_height,
+                                source_width=cropped_frame.shape[1],
+                                source_height=cropped_frame.shape[0],
+                                offset_x=offset_x,
+                                offset_y=offset_y,
+                            ),
+                            blendshapes=blendshape_sets[index] if index < len(blendshape_sets) else None,
+                        )
+                    )
+            if observations:
                 break
 
-        return regions, blendshapes
+        return observations
+
+    def _track_rppg(self, frame_bgr, landmarks: Optional[Sequence]):
+        if landmarks is None:
+            self._rppg_missing_frames += 1
+            if self._rppg_missing_frames >= self._rppg_reset_after_missing_frames:
+                self._rppg_processor.clear()
+            return None, self._rppg_processor.get_progress()
+
+        rgb_sample = extract_forehead_rgb(frame_bgr, landmarks)
+        if rgb_sample is None:
+            self._rppg_missing_frames += 1
+            if self._rppg_missing_frames >= self._rppg_reset_after_missing_frames:
+                self._rppg_processor.clear()
+            return None, self._rppg_processor.get_progress()
+
+        self._rppg_missing_frames = 0
+        self._rppg_processor.add_sample(*rgb_sample)
+        return self._rppg_processor.process(), self._rppg_processor.get_progress()
+
+    def _landmark_to_point(self, landmark, frame_width: int, frame_height: int) -> tuple[int, int]:
+        x = int(max(0, min(frame_width - 1, landmark.x * frame_width)))
+        y = int(max(0, min(frame_height - 1, landmark.y * frame_height)))
+        return x, y
+
+    def _draw_landmarks(self, frame_bgr, landmarks: Sequence, color: tuple[int, int, int]) -> None:
+        frame_height, frame_width = frame_bgr.shape[:2]
+        points = [self._landmark_to_point(landmark, frame_width, frame_height) for landmark in landmarks]
+        if not points:
+            return
+
+        line_color = tuple(max(0, min(255, channel - 35)) for channel in color)
+        for contour in _LANDMARK_CONTOURS:
+            contour_points = []
+            for index in contour:
+                if 0 <= index < len(points):
+                    contour_points.append(points[index])
+            if len(contour_points) >= 2:
+                for start, end in zip(contour_points, contour_points[1:]):
+                    self._cv2.line(frame_bgr, start, end, line_color, 1, self._cv2.LINE_AA)
+
+        for point in points:
+            self._cv2.circle(frame_bgr, point, 1, color, -1, self._cv2.LINE_AA)
 
     def detect(
         self,
@@ -134,14 +246,18 @@ class MediaPipeFaceAnalyzer:
             raise ValueError("frame_bgr must not be None")
 
         frame_height, frame_width = frame_bgr.shape[:2]
-        regions: List[FaceRegion] = []
-        face_blendshapes: List = []
+        observations: List[_FaceObservation] = []
 
         if candidate_regions:
-            regions, face_blendshapes = self._collect_guided_regions(frame_bgr, candidate_regions)
+            observations = self._collect_guided_observations(frame_bgr, candidate_regions)
 
-        if not regions:
-            regions, face_blendshapes = self._collect_full_frame_regions(frame_bgr)
+        if not observations:
+            observations = self._collect_full_frame_observations(frame_bgr)
+        self._last_observations = observations
+
+        regions = [observation.region for observation in observations]
+        primary_observation = observations[0] if observations else None
+        primary_blendshapes = list(primary_observation.blendshapes or []) if primary_observation is not None else []
 
         calibration_state = "waiting"
         calibration_progress = 0.0
@@ -151,9 +267,16 @@ class MediaPipeFaceAnalyzer:
         signals = dict(ZEROED_SIGNALS)
         dominant = "none"
         face_detected = bool(regions)
+        rppg_result = None
+        rppg_progress = self._rppg_processor.get_progress()
 
-        if face_detected and face_blendshapes:
-            raw_signals = extract_signals(face_blendshapes[0])
+        if primary_observation is not None:
+            rppg_result, rppg_progress = self._track_rppg(frame_bgr, primary_observation.landmarks)
+        else:
+            rppg_result, rppg_progress = self._track_rppg(frame_bgr, None)
+
+        if face_detected and primary_blendshapes:
+            raw_signals = extract_signals(primary_blendshapes)
 
             if self._baseline_signals is None:
                 self._calibration_samples.append(raw_signals)
@@ -191,12 +314,21 @@ class MediaPipeFaceAnalyzer:
             calibration_state=calibration_state,
             calibration_progress=calibration_progress,
             baseline=self._baseline_signals,
+            heart_rate=None if rppg_result is None else rppg_result.heart_rate,
+            respiration_rate=None if rppg_result is None else rppg_result.respiration_rate,
+            hrv=None if rppg_result is None else rppg_result.hrv,
+            snr=None if rppg_result is None else rppg_result.snr,
+            rppg_progress=rppg_progress,
+            rppg_signal=[] if rppg_result is None else rppg_result.bvp_signal,
         )
         self._last_analysis = analysis
         return analysis
 
     def annotate(self, frame_bgr, result: FaceAnalysisResult):
         annotated = frame_bgr.copy()
+        for observation in self._last_observations:
+            self._draw_landmarks(annotated, observation.landmarks, (255, 220, 90))
+
         for index, region in enumerate(result.regions, start=1):
             top_left = (region.x, region.y)
             bottom_right = (region.x + region.width, region.y + region.height)
@@ -216,6 +348,8 @@ class MediaPipeFaceAnalyzer:
                 label = f"Face {index} | Stress {result.stress_score:02d} | Fatigue {result.fatigue_score:02d}"
                 if result.dominant_signal != "none":
                     label += f" | {result.dominant_signal}"
+                if result.heart_rate is not None:
+                    label += f" | HR {int(round(result.heart_rate))}"
 
             label_y = region.y - 10 if region.y > 22 else region.y + 20
             text_size, baseline = self._cv2.getTextSize(label, self._cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
@@ -242,4 +376,6 @@ class MediaPipeFaceAnalyzer:
         return annotated
 
     def close(self) -> None:
+        self._last_observations = []
+        self._rppg_processor.clear()
         self._landmarker.close()

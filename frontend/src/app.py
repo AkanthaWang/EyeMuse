@@ -1,8 +1,11 @@
 from __future__ import annotations
+from collections import deque
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
+from html import escape
 import json
+import time
 from typing import Optional
 import sys
 
@@ -69,6 +72,20 @@ class ConversationItem:
     role: str
     text: str
     timestamp: str
+
+
+@dataclass(frozen=True)
+class MonitoringMetricSample:
+    captured_at: float
+    stress_score: float
+    fatigue_score: float
+    heart_rate: Optional[float]
+    respiration_rate: Optional[float]
+    hrv: Optional[float]
+
+
+_MONITORING_WINDOW_SECONDS = 12.0
+_MONITORING_MIN_SECONDS = 4.0
 
 
 def _make_dark_background_transparent(
@@ -204,6 +221,11 @@ class CameraWorker(QObject):
                             "face_count": face_count,
                             "stress_score": 0,
                             "fatigue_score": 0,
+                            "heart_rate": None,
+                            "respiration_rate": None,
+                            "hrv": None,
+                            "snr": None,
+                            "rppg_progress": 0.0,
                             "dominant_signal": "none",
                             "calibration_state": "unavailable",
                             "calibration_progress": 0.0,
@@ -233,6 +255,11 @@ class CameraWorker(QObject):
                         "face_count": face_count,
                         "stress_score": analysis_result.stress_score,
                         "fatigue_score": analysis_result.fatigue_score,
+                        "heart_rate": analysis_result.heart_rate,
+                        "respiration_rate": analysis_result.respiration_rate,
+                        "hrv": analysis_result.hrv,
+                        "snr": analysis_result.snr,
+                        "rppg_progress": analysis_result.rppg_progress,
                         "dominant_signal": analysis_result.dominant_signal,
                         "calibration_state": analysis_result.calibration_state,
                         "calibration_progress": analysis_result.calibration_progress,
@@ -252,6 +279,11 @@ class CameraWorker(QObject):
                     "face_count": face_count,
                     "stress_score": 0,
                     "fatigue_score": 0,
+                    "heart_rate": None,
+                    "respiration_rate": None,
+                    "hrv": None,
+                    "snr": None,
+                    "rppg_progress": 0.0,
                     "dominant_signal": "none",
                     "calibration_state": "unavailable",
                     "calibration_progress": 0.0,
@@ -306,13 +338,108 @@ class LLMStreamWorker(QObject):
         except Exception as exc:
             self.failed.emit(str(exc))
 
+
+# class PetAvatar(QWidget):
+#     def __init__(self, parent: Optional[QWidget] = None) -> None:
+#         super().__init__(parent)
+#         self._mood = PetMood.idle
+#         self._breath = 0.0
+#         self._timer = QTimer(self)
+#         self._timer.setInterval(32)
+#         self._timer.timeout.connect(self._tick)
+#         self._timer.start()
+#         self.setMinimumSize(320, 320)
+#         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+#     def setMood(self, mood: PetMood) -> None:
+#         if self._mood == mood:
+#             return
+#         self._mood = mood
+#         self.update()
+
+#     def mood(self) -> PetMood:
+#         return self._mood
+
+#     mood = Property(str, mood, setMood)
+
+#     def _tick(self) -> None:
+#         self._breath += 0.045
+#         if self._breath > 6.28318:
+#             self._breath = 0.0
+#         self.update()
+
+#     def paintEvent(self, event) -> None:  # noqa: N802
+#         del event
+#         painter = QPainter(self)
+#         painter.setRenderHint(QPainter.Antialiasing)
+#         painter.fillRect(self.rect(), QColor("#111827"))
+
+#         width = self.width()
+#         height = self.height()
+#         breath_offset = int(8 * (1 + (self._breath % 3.14159) / 3.14159))
+
+#         body_w = int(width * 0.56)
+#         body_h = int(height * 0.56)
+#         body_x = (width - body_w) // 2
+#         body_y = (height - body_h) // 2 + breath_offset // 2
+
+#         mood_colors = {
+#             PetMood.idle: (QColor("#7dd3fc"), QColor("#0f172a")),
+#             PetMood.listening: (QColor("#34d399"), QColor("#052e16")),
+#             PetMood.thinking: (QColor("#fbbf24"), QColor("#3b2f0a")),
+#             PetMood.responding: (QColor("#60a5fa"), QColor("#1e3a8a")),
+#             PetMood.alert: (QColor("#fb7185"), QColor("#4c0519")),
+#             PetMood.offline: (QColor("#94a3b8"), QColor("#1e293b")),
+#         }
+#         accent, shadow = mood_colors[self._mood]
+
+#         painter.setPen(Qt.NoPen)
+#         painter.setBrush(QColor(15, 23, 42, 180))
+#         painter.drawRoundedRect(body_x + 12, body_y + 16, body_w, body_h, 36, 36)
+
+#         painter.setBrush(accent)
+#         painter.drawRoundedRect(body_x, body_y, body_w, body_h, 36, 36)
+
+#         painter.setBrush(QColor(255, 255, 255, 220))
+#         eye_y = body_y + int(body_h * 0.38)
+#         eye_left_x = body_x + int(body_w * 0.31)
+#         eye_right_x = body_x + int(body_w * 0.61)
+#         eye_w = int(body_w * 0.09)
+#         eye_h = int(body_h * 0.10)
+#         if self._mood == PetMood.alert:
+#             eye_h = max(4, eye_h // 2)
+#         painter.drawEllipse(eye_left_x, eye_y, eye_w, eye_h)
+#         painter.drawEllipse(eye_right_x, eye_y, eye_w, eye_h)
+
+#         if self._mood in {PetMood.thinking, PetMood.responding}:
+#             mouth_w = int(body_w * 0.18)
+#             mouth_h = 5
+#             mouth_x = body_x + (body_w - mouth_w) // 2
+#             mouth_y = body_y + int(body_h * 0.66)
+#             painter.setBrush(shadow)
+#             painter.drawRoundedRect(mouth_x, mouth_y, mouth_w, mouth_h, 3, 3)
+#         elif self._mood == PetMood.listening:
+#             mouth_w = int(body_w * 0.15)
+#             mouth_h = int(body_h * 0.04)
+#             mouth_x = body_x + (body_w - mouth_w) // 2
+#             mouth_y = body_y + int(body_h * 0.66)
+#             painter.setBrush(QColor(255, 255, 255, 220))
+#             painter.drawRoundedRect(mouth_x, mouth_y, mouth_w, mouth_h, 5, 5)
+#         elif self._mood == PetMood.alert:
+#             painter.setBrush(QColor("#fff1f2"))
+#             painter.drawEllipse(body_x + int(body_w * 0.45), body_y + int(body_h * 0.64), int(body_w * 0.08), int(body_h * 0.08))
+
+#         ear_w = int(body_w * 0.18)
+#         ear_h = int(body_h * 0.15)
+#         painter.setBrush(accent.lighter(120))
+#         painter.drawRoundedRect(body_x + int(body_w * 0.08), body_y - ear_h // 2, ear_w, ear_h, 18, 18)
+#         painter.drawRoundedRect(body_x + int(body_w * 0.74), body_y - ear_h // 2, ear_w, ear_h, 18, 18)
 class PetAvatar(QLabel):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._mood = PetMood.idle
         self._movie: Optional[QMovie] = None
-        self._max_movie_size = QSize(320, 320)
-        self.setMinimumSize(240, 255)
+        self.setMinimumSize(320, 320)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setAlignment(Qt.AlignCenter)
 
@@ -332,33 +459,6 @@ class PetAvatar(QLabel):
         )
         self.setMood(PetMood.idle)
 
-    def _target_render_size(self) -> QSize:
-        available_size = QSize(
-            max(1, int(self.width() * 0.86)),
-            max(1, int(self.height() * 0.86)),
-        )
-        available_size.setWidth(min(available_size.width(), self._max_movie_size.width()))
-        available_size.setHeight(min(available_size.height(), self._max_movie_size.height()))
-        return available_size
-
-    def _render_current_frame(self) -> None:
-        if self._movie is None:
-            return
-
-        current_pixmap = self._movie.currentPixmap()
-        if current_pixmap.isNull():
-            return
-
-        scaled_pixmap = current_pixmap.scaled(
-            self._target_render_size(),
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
-        )
-        self.setPixmap(scaled_pixmap)
-
-    def _handle_movie_frame_changed(self, _frame_number: int) -> None:
-        self._render_current_frame()
-
     def setMood(self, mood: PetMood) -> None:
         if self._mood == mood and self._movie is not None:
             return
@@ -375,30 +475,24 @@ class PetAvatar(QLabel):
                 if self._movie is not None:
                     self._movie.stop()
                     self._movie = None
-                    self.clear()
+                    self.setMovie(None)
                 self.setText(f"缺少素材: {file_name}")
                 return
 
         if self._movie is not None:
             self._movie.stop()
-            try:
-                self._movie.frameChanged.disconnect(self._handle_movie_frame_changed)
-            except (TypeError, RuntimeError):
-                pass
-            self.clear()
 
-        new_movie = QMovie(str(asset_path))
-        new_movie.setCacheMode(QMovie.CacheAll)
-        self._movie = new_movie
-        self._movie.frameChanged.connect(self._handle_movie_frame_changed)
+        self._movie = QMovie(str(asset_path))
+        self._movie.setCacheMode(QMovie.CacheAll)
+        self._movie.setScaledSize(self.size())
+        self.setMovie(self._movie)
         self._movie.start()
-        self._movie.jumpToFrame(0)
-        self._render_current_frame()
         self.setText("")
 
-    def resizeEvent(self, event) -> None:
+    def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        self._render_current_frame()
+        if self._movie is not None:
+            self._movie.setScaledSize(self.size())
 
 class StatCard(QFrame):
     def __init__(self, title: str, value: str, parent: Optional[QWidget] = None) -> None:
@@ -436,6 +530,10 @@ class EyeMuseWindow(QMainWindow):
         self._fatigue_score = 0
         self._dominant_signal = "none"
         self._calibration_state = "waiting"
+        self._heart_rate: Optional[float] = None
+        self._respiration_rate: Optional[float] = None
+        self._hrv: Optional[float] = None
+        self._monitoring_samples: deque[MonitoringMetricSample] = deque()
         self._llm_client = self._create_llm_client()
         self._dashboard_repository = self._create_dashboard_repository()
         self._dashboard_period = "day"
@@ -454,7 +552,6 @@ class EyeMuseWindow(QMainWindow):
         self._report_custom_mode = False
         self._latest_daily_report_md = ""
         self._latest_weekly_report_md = ""
-        self._latest_custom_report_md = ""
         self._streaming_reply_index: Optional[int] = None
         self._streaming_user_text: str = ""
 
@@ -522,9 +619,7 @@ class EyeMuseWindow(QMainWindow):
         logo_pixmap = QPixmap(str(logo_path))
         if not logo_pixmap.isNull():
             logo_pixmap = _make_dark_background_transparent(logo_pixmap)
-            self.nav_logo_label.setPixmap(
-                logo_pixmap.scaledToHeight(64, Qt.SmoothTransformation)
-            )
+            self.nav_logo_label.setPixmap(logo_pixmap.scaledToHeight(64, Qt.SmoothTransformation))
         else:
             self.nav_logo_label.setText("EyeMuse")
 
@@ -535,11 +630,7 @@ class EyeMuseWindow(QMainWindow):
         self.dashboard_nav_button = QPushButton("可视化分析")
         self.report_nav_button = QPushButton("健康报告")
 
-        for button in (
-            self.dashboard_nav_button,
-            self.home_nav_button,
-            self.report_nav_button,
-        ):
+        for button in (self.dashboard_nav_button, self.home_nav_button, self.report_nav_button):
             button.setObjectName("NavButton")
             button.setCursor(Qt.PointingHandCursor)
             button.setCheckable(True)
@@ -617,7 +708,6 @@ class EyeMuseWindow(QMainWindow):
         self.pet_hint = QLabel("等待用户输入，或开启摄像头观察状态变化。")
         self.pet_hint.setWordWrap(True)
         self.pet_hint.setObjectName("Hint")
-        self.pet_hint.hide()
 
         quick_row = QHBoxLayout()
         quick_row.setSpacing(10)
@@ -636,16 +726,18 @@ class EyeMuseWindow(QMainWindow):
         self.stress_card = StatCard("压力估计", "未开始检测")
         self.fatigue_card = StatCard("疲劳状态", "未开始检测")
         self.camera_card = StatCard("摄像头", "关闭")
+        self.analysis_card = StatCard("分析状态", "等待开始")
+        self.event_card = StatCard("最近事件", "等待开始")
 
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(self.avatar, 1)
         layout.addLayout(status_row)
+        layout.addWidget(self.pet_hint)
         layout.addLayout(quick_row)
         layout.addWidget(self.local_state_card)
-        layout.addWidget(self.stress_card)
-        layout.addWidget(self.fatigue_card)
-        layout.addWidget(self.camera_card)
+        layout.addWidget(self.analysis_card)
+        layout.addWidget(self.event_card)
         return frame
 
     def _build_middle_panel(self) -> QFrame:
@@ -722,9 +814,19 @@ class EyeMuseWindow(QMainWindow):
         self.camera_note.setObjectName("Hint")
 
         self.face_card = StatCard("面部检测", "0 个面部")
-        self.analysis_card = StatCard("分析状态", "等待开始")
+        stress_row = QHBoxLayout()
+        stress_row.setSpacing(10)
+        stress_row.addWidget(self.stress_card)
+        stress_row.addWidget(self.fatigue_card)
+        self.heart_rate_card = StatCard("Heart Rate", "-- bpm")
+        self.respiration_card = StatCard("Respiration", "-- rpm")
+        self.hrv_card = StatCard("HRV", "-- ms")
         self.mode_card = StatCard("当前模式", "idle")
-        self.event_card = StatCard("最近事件", "等待开始")
+        metrics_row = QHBoxLayout()
+        metrics_row.setSpacing(10)
+        metrics_row.addWidget(self.heart_rate_card)
+        metrics_row.addWidget(self.respiration_card)
+        metrics_row.addWidget(self.hrv_card)
 
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -732,9 +834,9 @@ class EyeMuseWindow(QMainWindow):
         layout.addLayout(camera_controls)
         layout.addWidget(self.camera_note)
         layout.addWidget(self.face_card)
-        layout.addWidget(self.analysis_card)
+        layout.addLayout(stress_row)
+        layout.addLayout(metrics_row)
         layout.addWidget(self.mode_card)
-        layout.addWidget(self.event_card)
         return frame
 
     def _build_dashboard_page(self) -> QWidget:
@@ -922,11 +1024,7 @@ class EyeMuseWindow(QMainWindow):
             self._refresh_report_page()
 
         if show_status:
-            page_name = {
-                "home": "主页面",
-                "dashboard": "可视化分析大屏",
-                "report": "健康报告页面",
-            }.get(page, "主页面")
+            page_name = {"home": "主页面", "dashboard": "可视化分析大屏", "report": "健康报告页面"}.get(page, "主页面")
             self.statusBar().showMessage(f"已切换到{page_name}", 2500)
 
     def _focus_score(self) -> int:
@@ -949,6 +1047,150 @@ class EyeMuseWindow(QMainWindow):
         if self._face_count > 0 and self._local_camera_enabled:
             return "专注"
         return "平稳"
+
+    def _record_monitoring_sample(
+        self,
+        *,
+        face_count: int,
+        calibration_state: str,
+        stress_score: float,
+        fatigue_score: float,
+        heart_rate: Optional[float],
+        respiration_rate: Optional[float],
+        hrv: Optional[float],
+    ) -> None:
+        now = time.monotonic()
+        cutoff = now - _MONITORING_WINDOW_SECONDS
+        while self._monitoring_samples and self._monitoring_samples[0].captured_at < cutoff:
+            self._monitoring_samples.popleft()
+
+        if face_count <= 0 or calibration_state not in {"calibrating", "ready"}:
+            return
+
+        self._monitoring_samples.append(
+            MonitoringMetricSample(
+                captured_at=now,
+                stress_score=stress_score,
+                fatigue_score=fatigue_score,
+                heart_rate=heart_rate,
+                respiration_rate=respiration_rate,
+                hrv=hrv,
+            )
+        )
+
+    def _monitoring_averages(self) -> dict[str, Optional[float]]:
+        samples = list(self._monitoring_samples)
+        if not samples:
+            return {
+                "sample_count": 0.0,
+                "window_seconds": 0.0,
+                "stress_score": None,
+                "fatigue_score": None,
+                "heart_rate": None,
+                "respiration_rate": None,
+                "hrv": None,
+            }
+
+        def average(values: list[Optional[float]]) -> Optional[float]:
+            valid = [value for value in values if value is not None]
+            if not valid:
+                return None
+            return sum(valid) / len(valid)
+
+        window_seconds = samples[-1].captured_at - samples[0].captured_at if len(samples) > 1 else 0.0
+        return {
+            "sample_count": float(len(samples)),
+            "window_seconds": window_seconds,
+            "stress_score": average([sample.stress_score for sample in samples]),
+            "fatigue_score": average([sample.fatigue_score for sample in samples]),
+            "heart_rate": average([sample.heart_rate for sample in samples]),
+            "respiration_rate": average([sample.respiration_rate for sample in samples]),
+            "hrv": average([sample.hrv for sample in samples]),
+        }
+
+    def _resolve_monitoring_mood(
+        self,
+        *,
+        face_count: int,
+        calibration_state: str,
+        averages: dict[str, Optional[float]],
+    ) -> tuple[PetMood, str]:
+        if not self._local_camera_enabled:
+            return PetMood.offline, "摄像头关闭，当前未进行状态分析。"
+        if calibration_state == "unavailable":
+            return PetMood.offline, "分析链路不可用，当前处于离线监测状态。"
+        if face_count <= 0:
+            return PetMood.idle, "未检测到稳定人脸，当前保持空闲观察。"
+
+        window_seconds = float(averages.get("window_seconds") or 0.0)
+        if calibration_state == "calibrating" or window_seconds < _MONITORING_MIN_SECONDS:
+            return PetMood.listening, f"正在积累近 {_MONITORING_WINDOW_SECONDS:.0f} 秒状态均值，继续观察中。"
+
+        stress_avg = averages.get("stress_score")
+        fatigue_avg = averages.get("fatigue_score")
+        heart_rate_avg = averages.get("heart_rate")
+        respiration_avg = averages.get("respiration_rate")
+        hrv_avg = averages.get("hrv")
+
+        if stress_avg is None or fatigue_avg is None:
+            return PetMood.listening, "监测数据仍在积累，等待均值稳定。"
+
+        def band_level(
+            value: Optional[float],
+            *,
+            low_warn: Optional[float] = None,
+            low_alert: Optional[float] = None,
+            high_warn: Optional[float] = None,
+            high_alert: Optional[float] = None,
+        ) -> int:
+            if value is None:
+                return 0
+            if (low_alert is not None and value <= low_alert) or (high_alert is not None and value >= high_alert):
+                return 2
+            if (low_warn is not None and value <= low_warn) or (high_warn is not None and value >= high_warn):
+                return 1
+            return 0
+
+        stress_level = band_level(stress_avg, high_warn=58.0, high_alert=75.0)
+        fatigue_level = band_level(fatigue_avg, high_warn=55.0, high_alert=72.0)
+        heart_rate_level = band_level(heart_rate_avg, low_warn=56.0, low_alert=50.0, high_warn=92.0, high_alert=105.0)
+        respiration_level = band_level(respiration_avg, low_warn=11.0, low_alert=9.0, high_warn=19.0, high_alert=24.0)
+        hrv_level = band_level(hrv_avg, low_warn=38.0, low_alert=24.0)
+
+        levels = [stress_level, fatigue_level, heart_rate_level, respiration_level, hrv_level]
+        alert_count = sum(1 for level in levels if level == 2)
+        elevated_count = sum(1 for level in levels if level >= 1)
+        risk_points = sum(levels)
+
+        avg_parts = [
+            f"压力 {stress_avg:.0f}",
+            f"疲劳 {fatigue_avg:.0f}",
+        ]
+        if heart_rate_avg is not None:
+            avg_parts.append(f"HR {heart_rate_avg:.0f} bpm")
+        if respiration_avg is not None:
+            avg_parts.append(f"Resp {respiration_avg:.0f} rpm")
+        if hrv_avg is not None:
+            avg_parts.append(f"HRV {hrv_avg:.0f} ms")
+        avg_summary = "，".join(avg_parts)
+
+        if alert_count >= 2 or risk_points >= 5 or stress_level == 2 or fatigue_level == 2:
+            return PetMood.alert, f"近 {_MONITORING_WINDOW_SECONDS:.0f} 秒均值偏高：{avg_summary}，建议暂停并休息。"
+
+        if elevated_count >= 2 or risk_points >= 2:
+            return PetMood.thinking, f"近 {_MONITORING_WINDOW_SECONDS:.0f} 秒均值有波动：{avg_summary}，建议降低任务强度。"
+
+        comfortable = (
+            stress_avg <= 35.0
+            and fatigue_avg <= 35.0
+            and (heart_rate_avg is None or 60.0 <= heart_rate_avg <= 90.0)
+            and (respiration_avg is None or 12.0 <= respiration_avg <= 18.0)
+            and (hrv_avg is None or hrv_avg >= 45.0)
+        )
+        if comfortable and heart_rate_avg is not None and respiration_avg is not None and hrv_avg is not None:
+            return PetMood.responding, f"近 {_MONITORING_WINDOW_SECONDS:.0f} 秒均值平稳：{avg_summary}，当前处于积极响应状态。"
+
+        return PetMood.idle, f"近 {_MONITORING_WINDOW_SECONDS:.0f} 秒均值总体平稳：{avg_summary}，当前保持空闲观察。"
 
     def _build_realtime_snapshot(self):
         if RealtimeSnapshot is None:
@@ -1010,6 +1252,10 @@ class EyeMuseWindow(QMainWindow):
         self._dashboard_chart_page_ready = ok
         if not ok:
             self.statusBar().showMessage("分析大屏加载失败，已回退到当前内容。", 3200)
+            if self.dashboard_chart_view is not None:
+                self.dashboard_chart_view.setHtml(
+                    self._build_dashboard_fallback_html(self._pending_dashboard_payload or {}),
+                )
             return
         if self._pending_dashboard_payload is not None:
             payload = self._pending_dashboard_payload
@@ -1355,12 +1601,12 @@ class EyeMuseWindow(QMainWindow):
 
             window.dashboardCharts.pieChart.setOption({
                 animation: false,
-                color: palette,
                 tooltip: { trigger: 'item' },
                 legend: {
                     bottom: 6,
                     textStyle: { color: textColor },
                 },
+                color: palette,
                 series: [{
                     type: 'pie',
                     radius: ['46%', '72%'],
@@ -1498,7 +1744,7 @@ class EyeMuseWindow(QMainWindow):
                     setStatus('正在等待历史数据...');
                 }
             } catch (error) {
-                setStatus(error.message || '图表加载失败', true);
+                setStatus(error.message || '图表加载失败');
             }
         }
 
@@ -1516,6 +1762,327 @@ class EyeMuseWindow(QMainWindow):
 </html>
         """
 
+    def _build_dashboard_fallback_html(self, payload: dict) -> str:
+        categories = [str(item) for item in payload.get("line_categories", [])]
+        line_series = payload.get("line_series", {})
+        stress_series = [float(item) for item in line_series.get("压力", [])]
+        fatigue_series = [float(item) for item in line_series.get("疲劳", [])]
+        focus_series = [float(item) for item in line_series.get("专注", [])]
+        emotion_distribution = payload.get("emotion_distribution", [])
+        signal_distribution = payload.get("signal_distribution", [])
+        averages = payload.get("averages", {})
+        range_start = str(payload.get("range_start", "")).replace("T", " ")
+        range_end = str(payload.get("range_end", "")).replace("T", " ")
+        period_label = escape(str(payload.get("period_label", "历史区间")))
+
+        recent_stress = stress_series[-6:]
+        recent_fatigue = fatigue_series[-6:]
+        recent_focus = focus_series[-6:]
+        sample_count = int(payload.get("sample_count", 0) or 0)
+        avg_stress = int(round(float(averages.get("avg_stress", 0) or 0)))
+        avg_fatigue = int(round(float(averages.get("avg_fatigue", 0) or 0)))
+        avg_focus = int(round(float(averages.get("avg_focus", 0) or 0)))
+
+        def variance(series: list[float]) -> float:
+            if not series:
+                return 0.0
+            average = sum(series) / len(series)
+            return sum((item - average) ** 2 for item in series) / len(series)
+
+        stability_score = max(0, min(100, round(100 - variance(recent_focus) * 0.7)))
+        rhythm_score = max(0, min(100, round(100 - (variance(recent_stress) + variance(recent_fatigue)) * 0.25)))
+        recovery_score = max(0, min(100, round(100 - (avg_fatigue + avg_stress) * 0.45)))
+
+        def make_polyline(
+            series: list[float],
+            *,
+            width: int = 520,
+            height: int = 190,
+            max_value: float = 100.0,
+        ) -> str:
+            if not series:
+                return ""
+            if len(series) == 1:
+                y = height - (series[0] / max_value) * height
+                return f"0,{y:.1f} {width},{y:.1f}"
+            step_x = width / max(1, len(series) - 1)
+            points = []
+            for index, value in enumerate(series):
+                x = step_x * index
+                y = height - (max(0.0, min(max_value, value)) / max_value) * height
+                points.append(f"{x:.1f},{y:.1f}")
+            return " ".join(points)
+
+        def make_grid_lines(width: int = 520, height: int = 190) -> str:
+            lines: list[str] = []
+            for ratio in (0.2, 0.4, 0.6, 0.8):
+                y = height * ratio
+                lines.append(
+                    f"<line x1='0' y1='{y:.1f}' x2='{width}' y2='{y:.1f}' "
+                    "stroke='rgba(148,163,184,0.16)' stroke-width='1' />"
+                )
+            return "".join(lines)
+
+        def make_distribution_rows(items: list[dict], color: str, total_mode: str) -> str:
+            if not items:
+                return "<div class='empty'>暂无数据</div>"
+            if total_mode == "sum":
+                total = sum(max(0, int(item.get("value", 0) or 0)) for item in items) or 1
+            else:
+                total = max(max(0, int(item.get("value", 0) or 0)) for item in items) or 1
+            rows = []
+            for item in items:
+                name = escape(str(item.get("name", "-")))
+                value = max(0, int(item.get("value", 0) or 0))
+                percent = round(value / total * 100)
+                rows.append(
+                    "<div class='dist-row'>"
+                    f"<span>{name}</span>"
+                    f"<div class='dist-track'><i style='width:{percent}%; background:{color};'></i></div>"
+                    f"<b>{value}</b>"
+                    "</div>"
+                )
+            return "".join(rows)
+
+        trend_svg = (
+            "<svg viewBox='0 0 520 190' preserveAspectRatio='none'>"
+            f"{make_grid_lines()}"
+            f"<polyline fill='none' stroke='#38bdf8' stroke-width='3' points='{make_polyline(stress_series)}' />"
+            f"<polyline fill='none' stroke='#f59e0b' stroke-width='3' points='{make_polyline(fatigue_series)}' />"
+            f"<polyline fill='none' stroke='#22c55e' stroke-width='3' points='{make_polyline(focus_series)}' />"
+            "</svg>"
+        )
+        mini_svg = (
+            "<svg viewBox='0 0 320 150' preserveAspectRatio='none'>"
+            f"{make_grid_lines(320, 150)}"
+            f"<polyline fill='none' stroke='#f59e0b' stroke-width='3' points='{make_polyline(recent_stress, width=320, height=150)}' />"
+            f"<polyline fill='none' stroke='#38bdf8' stroke-width='3' points='{make_polyline(recent_fatigue, width=320, height=150)}' />"
+            f"<polyline fill='none' stroke='#22c55e' stroke-width='3' points='{make_polyline(recent_focus, width=320, height=150)}' />"
+            "</svg>"
+        )
+
+        recent_labels = " / ".join(escape(item) for item in categories[-6:]) or "等待历史数据"
+        emotion_rows = make_distribution_rows(emotion_distribution, "#a78bfa", "sum")
+        signal_rows = make_distribution_rows(signal_distribution, "#22c55e", "max")
+        radar_rows = make_distribution_rows(
+            [
+                {"name": "稳定度", "value": stability_score},
+                {"name": "恢复力", "value": recovery_score},
+                {"name": "专注力", "value": avg_focus},
+                {"name": "节奏感", "value": rhythm_score},
+                {"name": "低压力", "value": max(0, 100 - avg_stress)},
+            ],
+            "#38bdf8",
+            "max",
+        )
+
+        return f"""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        html, body {{
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(circle at top left, rgba(34, 197, 94, 0.08), transparent 22%),
+                radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 28%),
+                linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.96));
+            color: #e2e8f0;
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+        }}
+        .board {{
+            height: 100%;
+            box-sizing: border-box;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 1.5fr 1.1fr 1.1fr;
+            grid-template-rows: 1.2fr 1fr 96px;
+            gap: 20px;
+        }}
+        .card {{
+            position: relative;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(56, 189, 248, 0.16);
+            border-radius: 18px;
+            box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.36), 0 18px 38px rgba(2, 6, 23, 0.42);
+            overflow: hidden;
+        }}
+        .title {{
+            position: absolute;
+            left: 22px;
+            top: 18px;
+            color: #f8fafc;
+            font-size: 15px;
+            font-weight: 700;
+        }}
+        .trend {{ grid-column: 1 / span 2; grid-row: 1; }}
+        .donut {{ grid-column: 3; grid-row: 1; }}
+        .bar {{ grid-column: 1; grid-row: 2; }}
+        .radar {{ grid-column: 2; grid-row: 2; }}
+        .mini {{ grid-column: 3; grid-row: 2; }}
+        .metrics {{
+            grid-column: 1 / span 3;
+            grid-row: 3;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 18px;
+        }}
+        .metric {{
+            padding: 14px 18px;
+        }}
+        .metric-label {{
+            color: #94a3b8;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }}
+        .metric-value {{
+            color: #f8fafc;
+            font-size: 30px;
+            font-weight: 700;
+        }}
+        .metric-sub {{
+            color: #38bdf8;
+            font-size: 12px;
+            margin-top: 6px;
+        }}
+        .chart-area {{
+            position: absolute;
+            inset: 56px 18px 18px 18px;
+        }}
+        .legend {{
+            display: flex;
+            gap: 14px;
+            margin-bottom: 12px;
+            color: #cbd5e1;
+            font-size: 12px;
+        }}
+        .legend i {{
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            margin-right: 6px;
+            border-radius: 999px;
+        }}
+        svg {{
+            width: 100%;
+            height: calc(100% - 28px);
+        }}
+        .dist-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-top: 8px;
+        }}
+        .dist-row {{
+            display: grid;
+            grid-template-columns: 64px 1fr 40px;
+            gap: 10px;
+            align-items: center;
+            color: #cbd5e1;
+            font-size: 12px;
+        }}
+        .dist-track {{
+            height: 10px;
+            border-radius: 999px;
+            background: rgba(30, 41, 59, 0.95);
+            overflow: hidden;
+        }}
+        .dist-track i {{
+            display: block;
+            height: 100%;
+            border-radius: 999px;
+        }}
+        .dist-row b {{
+            color: #f8fafc;
+            text-align: right;
+        }}
+        .subnote {{
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.5;
+            margin-top: 10px;
+        }}
+        .empty {{
+            color: #94a3b8;
+            font-size: 13px;
+            padding-top: 16px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="board">
+        <div class="card trend">
+            <div class="title">历史趋势折线</div>
+            <div class="chart-area">
+                <div class="legend">
+                    <span><i style="background:#38bdf8;"></i>压力</span>
+                    <span><i style="background:#f59e0b;"></i>疲劳</span>
+                    <span><i style="background:#22c55e;"></i>专注</span>
+                </div>
+                {trend_svg}
+            </div>
+        </div>
+        <div class="card donut">
+            <div class="title">情绪结构扇形图</div>
+            <div class="chart-area">
+                <div class="dist-list">{emotion_rows}</div>
+                <div class="subnote">{period_label} · {escape(range_start or "待采集")} 到 {escape(range_end or "待采集")}</div>
+            </div>
+        </div>
+        <div class="card bar">
+            <div class="title">主信号柱状图</div>
+            <div class="chart-area">
+                <div class="dist-list">{signal_rows}</div>
+            </div>
+        </div>
+        <div class="card radar">
+            <div class="title">综合画像雷达图</div>
+            <div class="chart-area">
+                <div class="dist-list">{radar_rows}</div>
+            </div>
+        </div>
+        <div class="card mini">
+            <div class="title">近期波动面积图</div>
+            <div class="chart-area">
+                <div class="legend">
+                    <span><i style="background:#f59e0b;"></i>压力</span>
+                    <span><i style="background:#38bdf8;"></i>疲劳</span>
+                    <span><i style="background:#22c55e;"></i>专注</span>
+                </div>
+                {mini_svg}
+                <div class="subnote">最近窗口：{recent_labels}</div>
+            </div>
+        </div>
+        <div class="metrics">
+            <div class="card metric">
+                <div class="metric-label">历史平均压力</div>
+                <div class="metric-value">{avg_stress}</div>
+                <div class="metric-sub">{period_label}平均压力水平</div>
+            </div>
+            <div class="card metric">
+                <div class="metric-label">历史平均疲劳</div>
+                <div class="metric-value">{avg_fatigue}</div>
+                <div class="metric-sub">{period_label}疲劳波动概览</div>
+            </div>
+            <div class="card metric">
+                <div class="metric-label">历史平均专注</div>
+                <div class="metric-value">{avg_focus}</div>
+                <div class="metric-sub">{period_label}专注表现均值</div>
+            </div>
+            <div class="card metric">
+                <div class="metric-label">历史样本规模</div>
+                <div class="metric-value">{sample_count}</div>
+                <div class="metric-sub">{escape(range_start or "待采集")} - {escape(range_end or "待采集")}</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+        """
+
     def _update_dashboard_chart_view(self, payload: dict) -> None:
         if self.dashboard_chart_view is not None:
             self._pending_dashboard_payload = payload
@@ -1527,16 +2094,10 @@ class EyeMuseWindow(QMainWindow):
             self._push_dashboard_payload_to_view(payload)
             return
         if self.dashboard_chart_fallback is not None:
-            fallback_html = (
-                "<h3 style='color:#f8fafc;'>图表降级模式</h3>"
-                "<p style='color:#cbd5e1;'>当前运行环境未启用 Qt WebEngine，分析页已回退为历史数据概要。</p>"
-                f"<p style='color:#cbd5e1;'>历史样本：<b>{len(payload.get('line_categories', []))}</b></p>"
-                f"<p style='color:#cbd5e1;'>平均专注：<b>{payload.get('averages', {}).get('avg_focus', 0)}</b></p>"
-                f"<p style='color:#cbd5e1;'>平均压力：<b>{payload.get('averages', {}).get('avg_stress', 0)}</b></p>"
-            )
-            self.dashboard_chart_fallback.setHtml(fallback_html)
+            self.dashboard_chart_fallback.setHtml(self._build_dashboard_fallback_html(payload))
 
     def _refresh_dashboard_page(self) -> None:
+        self._sync_dashboard_repository()
         if self._dashboard_repository is not None:
             if self._dashboard_period == "custom":
                 start_date, end_date = self._dashboard_custom_range
@@ -1549,14 +2110,17 @@ class EyeMuseWindow(QMainWindow):
                 payload = self._dashboard_repository.get_dashboard_payload(self._dashboard_period)
         else:
             payload = {}
-        for period, button in self._dashboard_filter_buttons.items():
-            button.setChecked(period == self._dashboard_period)
-        self.dashboard_custom_apply_button.setProperty("active", self._dashboard_period == "custom")
-        self.dashboard_custom_apply_button.style().unpolish(self.dashboard_custom_apply_button)
-        self.dashboard_custom_apply_button.style().polish(self.dashboard_custom_apply_button)
+
+        if hasattr(self, "_dashboard_filter_buttons"):
+            for period, button in self._dashboard_filter_buttons.items():
+                button.setChecked(period == self._dashboard_period)
+        if hasattr(self, "dashboard_custom_apply_button"):
+            self.dashboard_custom_apply_button.setProperty("active", self._dashboard_period == "custom")
+            self.dashboard_custom_apply_button.style().unpolish(self.dashboard_custom_apply_button)
+            self.dashboard_custom_apply_button.style().polish(self.dashboard_custom_apply_button)
 
         payload_key = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        if getattr(self, "_dashboard_payload_key", "") != payload_key:
+        if self._dashboard_payload_key != payload_key:
             self._dashboard_payload_key = payload_key
             self._update_dashboard_chart_view(payload)
 
@@ -1570,21 +2134,18 @@ class EyeMuseWindow(QMainWindow):
             daily_summary = self._dashboard_repository.get_report_summary(start_date=today, end_date=today)
             if self._report_custom_mode:
                 custom_start, custom_end = self._report_custom_range
-                period_summary = self._dashboard_repository.get_report_summary(
-                    start_date=custom_start,
-                    end_date=custom_end,
-                )
+                period_summary = self._dashboard_repository.get_report_summary(start_date=custom_start, end_date=custom_end)
                 period_title = "自定义时间健康分析报告"
             else:
-                period_summary = self._dashboard_repository.get_report_summary(
-                    start_date=week_start,
-                    end_date=week_end,
-                )
+                period_summary = self._dashboard_repository.get_report_summary(start_date=week_start, end_date=week_end)
                 period_title = "每周健康分析报告"
         else:
             daily_summary = {}
             period_summary = {}
             period_title = "每周健康分析报告"
+
+        if not hasattr(self, "weekly_report_title"):
+            return
 
         self.weekly_report_title.setText(period_title)
         self.report_custom_apply_button.setProperty("active", self._report_custom_mode)
@@ -1605,7 +2166,6 @@ class EyeMuseWindow(QMainWindow):
             range_label=f"{period_summary.get('start_date', week_start.isoformat())} 至 {period_summary.get('end_date', week_end.isoformat())}",
             mode_label="周维度重点复盘" if not self._report_custom_mode else "自定义区间复盘",
         )
-
         self.daily_report_view.setMarkdown(self._latest_daily_report_md)
         self.weekly_report_view.setMarkdown(self._latest_weekly_report_md)
         self._write_report_snapshot("daily_latest.md", self._latest_daily_report_md)
@@ -1691,21 +2251,15 @@ class EyeMuseWindow(QMainWindow):
             risk_level = "中"
             suggestion = "建议采用 45-10 或 50-10 的学习工作节奏，控制压力峰值，穿插短休息。"
 
-        key_points = [
-            f"**主导情绪**：{top_emotion}，当前主要行为信号为 **{top_signal}**。",
-            f"**核心风险等级**：{risk_level}，期间共记录 **{sample_count}** 条有效样本。",
-            f"**优先建议**：{suggestion}",
-        ]
         event_lines = "\n".join(f"- {item}" for item in events) if events else "- 本时段暂无显著事件波动记录。"
-
         return (
             f"# {title}\n\n"
             f"> 统计区间：{range_label}  \n"
             f"> 分析模式：{mode_label}\n\n"
             "## 划重点\n"
-            f"- {key_points[0]}\n"
-            f"- {key_points[1]}\n"
-            f"- {key_points[2]}\n\n"
+            f"- **主导情绪**：{top_emotion}，当前主要行为信号为 **{top_signal}**。\n"
+            f"- **核心风险等级**：{risk_level}，期间共记录 **{sample_count}** 条有效样本。\n"
+            f"- **优先建议**：{suggestion}\n\n"
             "## 核心指标表\n\n"
             "| 指标 | 数值 | 解读 |\n"
             "| --- | ---: | --- |\n"
@@ -1778,21 +2332,6 @@ class EyeMuseWindow(QMainWindow):
                 background: rgba(15, 23, 42, 200);
                 border: 1px solid rgba(148, 163, 184, 60);
                 border-radius: 24px;
-            }
-            #HeroPanel {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 rgba(13, 71, 161, 220), stop:1 rgba(14, 116, 144, 180));
-                border: 1px solid rgba(125, 211, 252, 80);
-                border-radius: 24px;
-            }
-            #HeroTitle {
-                color: #eff6ff;
-                font-size: 26px;
-                font-weight: 700;
-            }
-            #HeroSubtitle {
-                color: #dbeafe;
-                font-size: 13px;
             }
             #SectionTitle {
                 color: #f8fafc;
@@ -1992,6 +2531,8 @@ class EyeMuseWindow(QMainWindow):
         )
 
     def _set_mood(self, mood: PetMood, hint: str) -> None:
+        if self.mood_badge.text() == mood.value and self.pet_hint.text() == hint:
+            return
         self.avatar.setMood(mood)
         self._update_mode_cards(mood.value)
         self.pet_hint.setText(hint)
@@ -2182,6 +2723,9 @@ class EyeMuseWindow(QMainWindow):
         self.stress_card.setValue("校准中")
         self.fatigue_card.setValue("校准中")
         self.analysis_card.setValue("正在初始化分析链路")
+        self.heart_rate_card.setValue("Collecting...")
+        self.respiration_card.setValue("Collecting...")
+        self.hrv_card.setValue("Collecting...")
         self._set_mood(PetMood.listening, "正在观察摄像头状态。")
 
     def _stop_camera(self) -> None:
@@ -2189,7 +2733,7 @@ class EyeMuseWindow(QMainWindow):
             self._camera_worker.stop()
         self._camera_worker = None
         self._reset_camera_ui()
-        self._set_mood(PetMood.idle, "摄像头已关闭。")
+        self._set_mood(PetMood.offline, "摄像头已关闭，当前处于离线状态。")
         self._refresh_dashboard_page()
         self._refresh_report_page()
 
@@ -2215,6 +2759,10 @@ class EyeMuseWindow(QMainWindow):
         self._fatigue_score = 0
         self._dominant_signal = "none"
         self._calibration_state = "waiting"
+        self._heart_rate = None
+        self._respiration_rate = None
+        self._hrv = None
+        self._monitoring_samples.clear()
         self.camera_preview.setPixmap(QPixmap())
         self.camera_preview.setText("摄像头未开启")
         self.camera_card.setValue(status)
@@ -2224,6 +2772,9 @@ class EyeMuseWindow(QMainWindow):
         self.stress_card.setValue("未开始检测")
         self.fatigue_card.setValue("未开始检测")
         self.analysis_card.setValue("等待开始")
+        self.heart_rate_card.setValue("-- bpm")
+        self.respiration_card.setValue("-- rpm")
+        self.hrv_card.setValue("-- ms")
 
     def _update_camera_frame(self, image: QImage) -> None:
         pixmap = QPixmap.fromImage(image)
@@ -2257,34 +2808,74 @@ class EyeMuseWindow(QMainWindow):
         dominant_signal = str(payload.get("dominant_signal", "none"))
         calibration_state = str(payload.get("calibration_state", "waiting"))
         calibration_progress = float(payload.get("calibration_progress", 0.0))
+        heart_rate_raw = payload.get("heart_rate")
+        respiration_rate_raw = payload.get("respiration_rate")
+        hrv_raw = payload.get("hrv")
+        rppg_progress = float(payload.get("rppg_progress", 0.0))
+        heart_rate = float(heart_rate_raw) if isinstance(heart_rate_raw, (int, float)) else None
+        respiration_rate = float(respiration_rate_raw) if isinstance(respiration_rate_raw, (int, float)) else None
+        hrv = float(hrv_raw) if isinstance(hrv_raw, (int, float)) else None
 
         self._face_count = face_count
         self._stress_score = stress_score
         self._fatigue_score = fatigue_score
         self._dominant_signal = dominant_signal
         self._calibration_state = calibration_state
+        self._heart_rate = heart_rate
+        self._respiration_rate = respiration_rate
+        self._hrv = hrv
+        self._record_monitoring_sample(
+            face_count=face_count,
+            calibration_state=calibration_state,
+            stress_score=stress_score,
+            fatigue_score=fatigue_score,
+            heart_rate=heart_rate,
+            respiration_rate=respiration_rate,
+            hrv=hrv,
+        )
         self.face_card.setValue(f"{face_count} 个面部")
         self.stress_card.setValue(f"{stress_score} / 100")
         self.fatigue_card.setValue(f"{fatigue_score} / 100")
+        self.heart_rate_card.setValue(f"{heart_rate:.0f} bpm" if heart_rate is not None else f"Collecting {int(rppg_progress * 100)}%")
+        self.respiration_card.setValue(f"{respiration_rate:.0f} rpm" if respiration_rate is not None else "-- rpm")
+        self.hrv_card.setValue(f"{hrv:.0f} ms" if hrv is not None else "-- ms")
+
+        rppg_parts = []
+        if heart_rate is not None:
+            rppg_parts.append(f"HR {heart_rate:.0f} bpm")
+        if respiration_rate is not None:
+            rppg_parts.append(f"Resp {respiration_rate:.0f} rpm")
+        if hrv is not None:
+            rppg_parts.append(f"HRV {hrv:.0f} ms")
+        rppg_summary = " | ".join(rppg_parts)
+        monitoring_averages = self._monitoring_averages()
+        monitoring_mood, monitoring_hint = self._resolve_monitoring_mood(
+            face_count=face_count,
+            calibration_state=calibration_state,
+            averages=monitoring_averages,
+        )
 
         if calibration_state == "calibrating":
             analysis_text = f"校准中 {int(calibration_progress * 100)}%"
+            if heart_rate is None and rppg_progress > 0.0:
+                analysis_text += f" | rPPG {int(rppg_progress * 100)}%"
             self.analysis_card.setValue(analysis_text)
             self.camera_note.setText(f"正在进行中性面部校准：{analysis_text}")
             self.event_card.setValue(analysis_text)
-            self._set_mood(PetMood.listening, "正在校准压力分析基线。")
         elif calibration_state == "ready":
             if dominant_signal != "none":
                 analysis_text = f"已就绪 · 主信号 {dominant_signal}"
             else:
                 analysis_text = "已就绪"
+            if rppg_summary:
+                analysis_text = f"{analysis_text} | {rppg_summary}"
             self.analysis_card.setValue(analysis_text)
-            self.camera_note.setText(f"压力 {stress_score}，疲劳 {fatigue_score}。")
-            self.event_card.setValue(f"压力 {stress_score} / 疲劳 {fatigue_score}")
-            if stress_score >= 80 or fatigue_score >= 80:
-                self._set_mood(PetMood.alert, f"压力 {stress_score}，疲劳 {fatigue_score}，建议休息。")
-            elif stress_score >= 60 or fatigue_score >= 60:
-                self._set_mood(PetMood.thinking, f"压力 {stress_score}，疲劳 {fatigue_score}。")
+            if rppg_summary:
+                self.camera_note.setText(f"压力 {stress_score}，疲劳 {fatigue_score} | {rppg_summary}")
+                self.event_card.setValue(f"压力 {stress_score} / 疲劳 {fatigue_score} | {rppg_summary}")
+            else:
+                self.camera_note.setText(f"压力 {stress_score}，疲劳 {fatigue_score}。")
+                self.event_card.setValue(f"压力 {stress_score} / 疲劳 {fatigue_score}")
         elif calibration_state == "unavailable":
             self.analysis_card.setValue("基础检测模式")
             self.camera_note.setText("已回退到基础面部框选，压力/疲劳分析未启用。")
@@ -2292,17 +2883,29 @@ class EyeMuseWindow(QMainWindow):
         else:
             self.analysis_card.setValue("等待面部")
             if face_count > 0:
-                self.camera_note.setText("已检测到人脸，等待 MediaPipe 关键点稳定后开始分析。")
-                self.event_card.setValue("已检测到人脸，等待关键点稳定")
+                if heart_rate is None and rppg_progress > 0.0:
+                    self.camera_note.setText(f"已检测到人脸，等待 MediaPipe 关键点稳定后开始分析。rPPG {int(rppg_progress * 100)}%")
+                    self.event_card.setValue(f"rPPG collecting {int(rppg_progress * 100)}%")
+                else:
+                    self.camera_note.setText("已检测到人脸，等待 MediaPipe 关键点稳定后开始分析。")
+                    self.event_card.setValue("已检测到人脸，等待关键点稳定")
             else:
                 self.camera_note.setText("等待检测到面部后开始分析。")
                 self.event_card.setValue("等待面部")
+        self._set_mood(monitoring_mood, monitoring_hint)
         self._refresh_dashboard_page()
         self._refresh_report_page()
 
     def _current_summary(self) -> str:
         camera_state = "开启" if self._local_camera_enabled else "关闭"
-        return f"摄像头 {camera_state}，检测到 {self._face_count} 个面部。"
+        summary = f"摄像头 {camera_state}，检测到 {self._face_count} 个面部。"
+        if self._heart_rate is not None:
+            summary += f" HR {self._heart_rate:.0f} bpm."
+        if self._respiration_rate is not None:
+            summary += f" Resp {self._respiration_rate:.0f} rpm."
+        if self._hrv is not None:
+            summary += f" HRV {self._hrv:.0f} ms."
+        return summary
 
     @staticmethod
     def _now() -> str:
