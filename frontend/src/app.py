@@ -1,15 +1,18 @@
 from __future__ import annotations
 from collections import deque
+import faulthandler
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
 from html import escape
 import json
 import math
+import os
 import threading
 import time
 from typing import Optional
 import sys
+import traceback
 
 import cv2
 from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QRectF, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
@@ -35,6 +38,14 @@ from PySide6.QtWidgets import (
     QTextBrowser,
     QVBoxLayout,
     QWidget,
+)
+
+from ui import (
+    apply_modern_theme,
+    build_companion_chat_html,
+    build_dashboard_chart_html,
+    build_dashboard_fallback_html,
+    build_main_conversation_html,
 )
 
 
@@ -103,6 +114,34 @@ _ACTIVITY_BASELINE_PERIODS = 10
 _ACTIVITY_SWITCH_WINDOW_SECONDS = 2.0
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _log_dir() -> Path:
+    path = Path(__file__).resolve().parents[2] / "data" / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _enable_crash_logging() -> None:
+    log_path = _log_dir() / "frontend_crash.log"
+    log_file = log_path.open("a", encoding="utf-8")
+    faulthandler.enable(log_file, all_threads=True)
+
+    def _handle_exception(exc_type, exc_value, exc_tb) -> None:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_file.write(f"\n[{timestamp}] Unhandled exception\n")
+        traceback.print_exception(exc_type, exc_value, exc_tb, file=log_file)
+        log_file.flush()
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _handle_exception
+
+
 def _make_dark_background_transparent(
     pixmap: QPixmap,
     *,
@@ -149,7 +188,7 @@ class CameraWorker(QObject):
             self.finished.emit()
             return
 
-        if YOLOFaceDetector is not None:
+        if YOLOFaceDetector is not None and _env_flag("EYEMUSE_ENABLE_YOLO", False):
             try:
                 self._detector = YOLOFaceDetector()
             except Exception as exc:
@@ -396,7 +435,8 @@ class PetAvatar(QLabel):
 
         if show_background:
             self.setStyleSheet(
-                "background: rgba(17, 24, 39, 0.92);"
+                "background: rgba(233, 246, 255, 0.36);"
+                "border: 1px solid rgba(255, 255, 255, 0.72);"
                 "border-radius: 24px;"
             )
         else:
@@ -529,11 +569,12 @@ class CompanionPetWindow(QWidget):
         self.bubble_label.setAlignment(Qt.AlignCenter)
         self.bubble_label.setMinimumHeight(52)
         self.bubble_label.setStyleSheet(
-            "background: rgba(255, 255, 255, 0.94);"
-            "color: #334155;"
-            "border: 1px solid rgba(226, 232, 240, 0.95);"
-            "border-radius: 16px;"
-            "padding: 10px 12px;"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            " stop:0 rgba(229, 243, 255, 0.86), stop:1 rgba(197, 223, 255, 0.74));"
+            "color: #3b679e;"
+            "border: 1px solid rgba(255, 255, 255, 0.82);"
+            "border-radius: 18px;"
+            "padding: 10px 14px;"
             "font-size: 12px;"
             "font-weight: 600;"
         )
@@ -543,11 +584,11 @@ class CompanionPetWindow(QWidget):
         self.marquee_label = QLabel("")
         self.marquee_label.setAlignment(Qt.AlignCenter)
         self.marquee_label.setStyleSheet(
-            "color: #0f172a;"
-            "background: rgba(14, 165, 233, 0.22);"
-            "border: 1px solid rgba(125, 211, 252, 0.38);"
+            "color: #4a74aa;"
+            "background: rgba(229, 243, 255, 0.58);"
+            "border: 1px solid rgba(255, 255, 255, 0.80);"
             "border-radius: 12px;"
-            "padding: 4px 10px;"
+            "padding: 5px 12px;"
             "font-size: 11px;"
             "font-weight: 700;"
         )
@@ -575,8 +616,9 @@ class CompanionPetWindow(QWidget):
 
         self.chat_frame = QFrame()
         self.chat_frame.setStyleSheet(
-            "background: rgba(255, 255, 255, 0.96);"
-            "border: 1px solid rgba(125, 211, 252, 0.42);"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            " stop:0 rgba(233, 246, 255, 0.70), stop:1 rgba(198, 224, 255, 0.60));"
+            "border: 1px solid rgba(255, 255, 255, 0.84);"
             "border-radius: 18px;"
         )
         chat_layout = QVBoxLayout(self.chat_frame)
@@ -585,7 +627,7 @@ class CompanionPetWindow(QWidget):
         self.chat_hint_label = QLabel("和 EyeMuse 说句话")
         self.chat_hint_label.setAlignment(Qt.AlignCenter)
         self.chat_hint_label.setStyleSheet(
-            "color: #64748b;"
+            "color: #6e8db8;"
             "font-size: 11px;"
             "font-weight: 700;"
         )
@@ -596,7 +638,7 @@ class CompanionPetWindow(QWidget):
             "background: transparent;"
             "border: none;"
             "padding: 2px 2px 0 2px;"
-            "color: #334155;"
+            "color: #3b679e;"
             "font-size: 12px;"
         )
         self.chat_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -605,11 +647,11 @@ class CompanionPetWindow(QWidget):
         self.chat_input = QLineEdit()
         self.chat_input.setPlaceholderText("直接输入文字，和 EyeMuse 对话")
         self.chat_input.setStyleSheet(
-            "background: rgba(248,250,252,1.0);"
-            "border: 1px solid rgba(148,163,184,0.28);"
+            "background: rgba(214, 234, 255, 0.62);"
+            "border: 1px solid rgba(255, 255, 255, 0.84);"
             "border-radius: 14px;"
             "padding: 8px 12px;"
-            "color: #0f172a;"
+            "color: #355e96;"
             "font-size: 12px;"
         )
         self.chat_input.returnPressed.connect(self._emit_chat_submit)
@@ -618,16 +660,18 @@ class CompanionPetWindow(QWidget):
         self.chat_send_button.setMinimumHeight(30)
         self.chat_send_button.setStyleSheet(
             "QPushButton {"
-            "background: rgba(56, 189, 248, 0.95);"
-            "border: none;"
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            " stop:0 rgba(124, 149, 232, 0.98), stop:1 rgba(80, 107, 195, 0.96));"
+            "border: 1px solid rgba(154, 180, 245, 0.30);"
             "border-radius: 14px;"
-            "color: #082f49;"
+            "color: #164a83;"
             "font-size: 12px;"
             "font-weight: 700;"
             "padding: 6px 14px;"
             "}"
             "QPushButton:hover {"
-            "background: rgba(125, 211, 252, 1.0);"
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+            " stop:0 rgba(140, 167, 245, 0.98), stop:1 rgba(102, 129, 224, 0.98));"
             "}"
         )
         self.chat_send_button.clicked.connect(self._emit_chat_submit)
@@ -644,7 +688,9 @@ class CompanionPetWindow(QWidget):
 
         self.toolbar_frame = QFrame()
         self.toolbar_frame.setStyleSheet(
-            "background: rgba(255, 255, 255, 0.92);"
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+            " stop:0 rgba(233, 246, 255, 0.68), stop:1 rgba(198, 224, 255, 0.58));"
+            "border: 1px solid rgba(255, 255, 255, 0.82);"
             "border-radius: 14px;"
             "padding: 1px;"
         )
@@ -660,17 +706,18 @@ class CompanionPetWindow(QWidget):
         secondary_toolbar_row.setSpacing(4)
         toolbar_button_style = (
             "QPushButton {"
-            "background: rgba(255,255,255,0.0);"
-            "border: none;"
+            "background: rgba(228, 242, 255, 0.52);"
+            "border: 1px solid rgba(255, 255, 255, 0.80);"
             "border-radius: 10px;"
-            "color: #64748b;"
+            "color: #4470a7;"
             "font-size: 11px;"
             "font-weight: 700;"
             "padding: 4px 8px;"
             "}"
             "QPushButton:hover {"
-            "background: rgba(148,163,184,0.14);"
-            "color: #334155;"
+            "background: rgba(206, 229, 255, 0.72);"
+            "border: 1px solid rgba(255, 255, 255, 0.88);"
+            "color: #2f5c98;"
             "}"
         )
         self._toolbar_buttons: dict[str, QPushButton] = {}
@@ -753,31 +800,31 @@ class CompanionPetWindow(QWidget):
 
         bubble_styles = {
             "focus": (
-                "background: rgba(219, 234, 254, 0.96);"
-                "color: #0f172a;"
-                "border: 1px solid rgba(125, 211, 252, 0.95);"
+                "background: rgba(227, 242, 255, 0.84);"
+                "color: #3b679e;"
+                "border: 1px solid rgba(255, 255, 255, 0.84);"
             ),
             "fatigue": (
-                "background: rgba(255, 237, 213, 0.96);"
-                "color: #7c2d12;"
-                "border: 1px solid rgba(251, 191, 36, 0.95);"
+                "background: rgba(255, 241, 219, 0.82);"
+                "color: #7b6a4b;"
+                "border: 1px solid rgba(255, 255, 255, 0.84);"
             ),
             "soothe": (
-                "background: rgba(243, 232, 255, 0.96);"
-                "color: #581c87;"
-                "border: 1px solid rgba(196, 181, 253, 0.95);"
+                "background: rgba(230, 233, 255, 0.82);"
+                "color: #5d6fa7;"
+                "border: 1px solid rgba(255, 255, 255, 0.84);"
             ),
         }
         bubble_style = bubble_styles.get(
             mode_key,
-            "background: rgba(255, 255, 255, 0.94);"
-            "color: #334155;"
-            "border: 1px solid rgba(226, 232, 240, 0.95);",
+            "background: rgba(229, 243, 255, 0.84);"
+            "color: #3b679e;"
+            "border: 1px solid rgba(255, 255, 255, 0.84);",
         )
         self.bubble_label.setStyleSheet(
             bubble_style
-            + "border-radius: 16px;"
-            + "padding: 10px 12px;"
+            + "border-radius: 18px;"
+            + "padding: 10px 14px;"
             + "font-size: 12px;"
             + "font-weight: 600;"
         )
@@ -1199,9 +1246,14 @@ class StatCard(QFrame):
     def __init__(self, title: str, value: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setObjectName("StatCard")
+        glow = QGraphicsDropShadowEffect(self)
+        glow.setBlurRadius(30)
+        glow.setOffset(0, 8)
+        glow.setColor(QColor(0, 0, 0, 88))
+        self.setGraphicsEffect(glow)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(3)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(6)
         self.title_label = QLabel(title)
         self.title_label.setObjectName("CardTitle")
         self.value_label = QLabel(value)
@@ -1610,9 +1662,9 @@ class EyeMuseWindow(QMainWindow):
         page = QWidget()
         page.setObjectName("Page")
         root_layout = QGridLayout(page)
-        root_layout.setContentsMargins(20, 20, 20, 20)
-        root_layout.setHorizontalSpacing(18)
-        root_layout.setVerticalSpacing(18)
+        root_layout.setContentsMargins(24, 24, 24, 24)
+        root_layout.setHorizontalSpacing(24)
+        root_layout.setVerticalSpacing(24)
 
         left_panel = self._build_left_panel()
         middle_panel = self._build_middle_panel()
@@ -1630,16 +1682,16 @@ class EyeMuseWindow(QMainWindow):
         frame = QFrame()
         frame.setObjectName("Panel")
         effect = QGraphicsDropShadowEffect(frame)
-        effect.setBlurRadius(30)
+        effect.setBlurRadius(34)
         effect.setOffset(0, 10)
-        effect.setColor(QColor(0, 0, 0, 90))
+        effect.setColor(QColor(0, 0, 0, 96))
         frame.setGraphicsEffect(effect)
         return frame
 
     def _build_left_panel(self) -> QFrame:
         frame = self._panel_frame()
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(22, 22, 22, 22)
         layout.setSpacing(16)
 
         title = QLabel("EyeMuse 桌面宠物")
@@ -1647,8 +1699,18 @@ class EyeMuseWindow(QMainWindow):
         subtitle = QLabel("感知、陪伴、提醒，尽量都留在本地")
         subtitle.setObjectName("Subtitle")
 
-        self.avatar = PetAvatar()
+        self.avatar = PetAvatar(show_background=False)
         self.avatar.setObjectName("Avatar")
+        self.avatar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.avatar.setAlignment(Qt.AlignCenter)
+
+        avatar_container = QWidget()
+        avatar_layout = QVBoxLayout(avatar_container)
+        avatar_layout.setContentsMargins(0, 0, 0, 0)
+        avatar_layout.setSpacing(0)
+        avatar_layout.addStretch(1)
+        avatar_layout.addWidget(self.avatar, 0, Qt.AlignCenter)
+        avatar_layout.addStretch(1)
 
         status_row = QHBoxLayout()
         status_row.setSpacing(10)
@@ -1678,6 +1740,9 @@ class EyeMuseWindow(QMainWindow):
         self.listen_button = QPushButton("进入聆听")
         self.think_button = QPushButton("思考中")
         self.respond_button = QPushButton("回应一下")
+        self.listen_button.setObjectName("PrimaryActionButton")
+        self.think_button.setObjectName("SecondaryActionButton")
+        self.respond_button.setObjectName("SecondaryActionButton")
         for button in (self.listen_button, self.think_button, self.respond_button):
             button.setCursor(Qt.PointingHandCursor)
             quick_row.addWidget(button)
@@ -1686,7 +1751,6 @@ class EyeMuseWindow(QMainWindow):
         self.think_button.clicked.connect(lambda: self._set_mood(PetMood.thinking, "我在整理你刚才说的话。"))
         self.respond_button.clicked.connect(lambda: self._set_mood(PetMood.responding, "准备给你一个更自然的回应。"))
 
-        self.local_state_card = StatCard("隐私与保存", "默认仅保留本地会话、摄像头状态与键鼠行为摘要，不主动上传原始数据。")
         self.stress_card = StatCard("压力估计", "未开始检测")
         self.fatigue_card = StatCard("疲劳状态", "未开始检测")
         self.camera_card = StatCard("摄像头", "关闭")
@@ -1695,11 +1759,10 @@ class EyeMuseWindow(QMainWindow):
 
         layout.addWidget(title)
         layout.addWidget(subtitle)
-        layout.addWidget(self.avatar, 1)
+        layout.addWidget(avatar_container, 1)
         layout.addLayout(status_row)
         layout.addWidget(self.pet_hint)
         layout.addLayout(quick_row)
-        layout.addWidget(self.local_state_card)
         layout.addWidget(self.analysis_card)
         layout.addWidget(self.event_card)
         return frame
@@ -1707,8 +1770,8 @@ class EyeMuseWindow(QMainWindow):
     def _build_middle_panel(self) -> QFrame:
         frame = self._panel_frame()
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
 
         title = QLabel("对话与回应")
         title.setObjectName("Title")
@@ -1723,6 +1786,7 @@ class EyeMuseWindow(QMainWindow):
         self.message_input.setPlaceholderText("输入一句话，让 EyeMuse 回应你")
         self.message_input.returnPressed.connect(self._handle_send)
         self.send_button = QPushButton("发送")
+        self.send_button.setObjectName("PrimaryActionButton")
         self.send_button.setCursor(Qt.PointingHandCursor)
         self.send_button.clicked.connect(self._handle_send)
         input_row.addWidget(self.message_input, 1)
@@ -1732,6 +1796,9 @@ class EyeMuseWindow(QMainWindow):
         self.remind_button = QPushButton("提醒我休息")
         self.energy_button = QPushButton("查看状态")
         self.clear_button = QPushButton("清空对话")
+        self.remind_button.setObjectName("SecondaryActionButton")
+        self.energy_button.setObjectName("GhostActionButton")
+        self.clear_button.setObjectName("GhostActionButton")
         for button in (self.remind_button, self.energy_button, self.clear_button):
             button.setCursor(Qt.PointingHandCursor)
             action_row.addWidget(button)
@@ -1750,8 +1817,8 @@ class EyeMuseWindow(QMainWindow):
     def _build_right_panel(self) -> QFrame:
         frame = self._panel_frame()
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(8)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(12)
 
         title = QLabel("感知面板")
         title.setObjectName("Title")
@@ -1784,7 +1851,7 @@ class EyeMuseWindow(QMainWindow):
         self.face_card.value_label.setWordWrap(False)
         self.face_card.value_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.face_card.value_label.setTextFormat(Qt.PlainText)
-        self.face_card.value_label.setStyleSheet("font-size: 12px;")
+        self.face_card.value_label.setStyleSheet("font-size: 13px; color: #355E96;")
         self.mode_card = StatCard("当前模式", "idle")
         self.mode_card.setMaximumHeight(78)
         self.mode_card.setMinimumHeight(68)
@@ -1809,7 +1876,7 @@ class EyeMuseWindow(QMainWindow):
         self.mouse_card.setMinimumHeight(68)
         self.behavior_card.setMaximumHeight(66)
         self.behavior_card.setMinimumHeight(58)
-        self.behavior_card.value_label.setStyleSheet("font-size: 12px;")
+        self.behavior_card.value_label.setStyleSheet("font-size: 13px; color: #355E96;")
         self.behavior_card.value_label.setWordWrap(False)
         self.behavior_card.value_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         overview_row = QHBoxLayout()
@@ -1844,8 +1911,8 @@ class EyeMuseWindow(QMainWindow):
         page = QWidget()
         page.setObjectName("Page")
         root_layout = QVBoxLayout(page)
-        root_layout.setContentsMargins(20, 20, 20, 20)
-        root_layout.setSpacing(16)
+        root_layout.setContentsMargins(24, 24, 24, 24)
+        root_layout.setSpacing(18)
 
         filter_row = QHBoxLayout()
         filter_row.setSpacing(18)
@@ -1897,12 +1964,12 @@ class EyeMuseWindow(QMainWindow):
 
         chart_frame = self._panel_frame()
         chart_layout = QVBoxLayout(chart_frame)
-        chart_layout.setContentsMargins(20, 20, 20, 20)
-        chart_layout.setSpacing(10)
+        chart_layout.setContentsMargins(22, 22, 22, 22)
+        chart_layout.setSpacing(12)
         if QWebEngineView is not None:
             self.dashboard_chart_view = QWebEngineView()
             self.dashboard_chart_view.setObjectName("ChartView")
-            self.dashboard_chart_view.page().setBackgroundColor(QColor("#020617"))
+            self.dashboard_chart_view.page().setBackgroundColor(QColor("#EAF7FF"))
             self.dashboard_chart_view.loadFinished.connect(self._on_dashboard_chart_shell_loaded)
             chart_layout.addWidget(self.dashboard_chart_view, 1)
             self.dashboard_chart_fallback = None
@@ -1919,12 +1986,12 @@ class EyeMuseWindow(QMainWindow):
         page = QWidget()
         page.setObjectName("Page")
         root_layout = QVBoxLayout(page)
-        root_layout.setContentsMargins(20, 20, 20, 20)
-        root_layout.setSpacing(18)
+        root_layout.setContentsMargins(24, 24, 24, 24)
+        root_layout.setSpacing(20)
 
         report_grid = QGridLayout()
-        report_grid.setHorizontalSpacing(18)
-        report_grid.setVerticalSpacing(18)
+        report_grid.setHorizontalSpacing(24)
+        report_grid.setVerticalSpacing(24)
 
         daily_frame = self._panel_frame()
         daily_layout = QVBoxLayout(daily_frame)
@@ -2346,26 +2413,30 @@ class EyeMuseWindow(QMainWindow):
         }
         body {
             background:
-                radial-gradient(circle at top left, rgba(34, 197, 94, 0.08), transparent 22%),
-                radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 28%),
-                linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.96));
+                radial-gradient(circle at 16% 10%, rgba(59, 130, 246, 0.22), transparent 28%),
+                radial-gradient(circle at 82% 12%, rgba(34, 211, 238, 0.12), transparent 24%),
+                radial-gradient(circle at 50% 100%, rgba(22, 163, 74, 0.08), transparent 28%),
+                linear-gradient(160deg, rgba(4, 11, 21, 0.98), rgba(7, 17, 31, 0.98) 42%, rgba(11, 23, 40, 0.96));
         }
         .board {
             width: 100%;
             height: 100%;
-            padding: 20px;
+            padding: 22px;
             box-sizing: border-box;
             display: grid;
             grid-template-columns: 1.5fr 1.1fr 1.1fr;
             grid-template-rows: 1.2fr 1fr 96px;
-            row-gap: 28px;
+            row-gap: 24px;
             column-gap: 20px;
         }
         .metric-card, .chart-card {
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(56, 189, 248, 0.16);
-            border-radius: 18px;
-            box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.36), 0 18px 38px rgba(2, 6, 23, 0.42);
+            background: linear-gradient(145deg, rgba(9, 20, 38, 0.92), rgba(15, 35, 61, 0.84));
+            border: 1px solid rgba(125, 211, 252, 0.14);
+            border-radius: 22px;
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.04),
+                inset 0 0 0 1px rgba(125, 211, 252, 0.04),
+                0 24px 50px rgba(2, 6, 23, 0.46);
         }
         .metric-row {
             grid-column: 1 / span 3;
@@ -2375,38 +2446,41 @@ class EyeMuseWindow(QMainWindow):
             gap: 18px;
         }
         .metric-card {
-            padding: 14px 18px;
+            padding: 15px 18px;
             display: flex;
             flex-direction: column;
             justify-content: center;
         }
         .metric-label {
-            color: #94a3b8;
+            color: #8ba8c6;
             font-size: 12px;
-            margin-bottom: 8px;
+            margin-bottom: 9px;
+            letter-spacing: 0.4px;
         }
         .metric-value {
-            color: #f8fafc;
+            color: #f8fdff;
             font-size: 30px;
             font-weight: 700;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.4px;
+            text-shadow: 0 0 18px rgba(125, 211, 252, 0.16);
         }
         .metric-sub {
-            color: #38bdf8;
+            color: #6dd3ff;
             font-size: 12px;
             margin-top: 6px;
         }
         .chart-card {
             position: relative;
-            padding: 16px;
+            padding: 18px;
         }
         .chart-title {
             position: absolute;
             left: 22px;
             top: 18px;
-            color: #f8fafc;
+            color: #f8fdff;
             font-size: 15px;
             font-weight: 700;
+            letter-spacing: 0.3px;
             z-index: 2;
         }
         .chart {
@@ -2420,8 +2494,8 @@ class EyeMuseWindow(QMainWindow):
             align-items: center;
             justify-content: center;
             border-radius: 16px;
-            background: rgba(2, 6, 23, 0.82);
-            color: #cbd5e1;
+            background: rgba(4, 12, 24, 0.84);
+            color: #d8ebfc;
             font-size: 14px;
             letter-spacing: 0.3px;
             z-index: 5;
@@ -2433,7 +2507,7 @@ class EyeMuseWindow(QMainWindow):
         }
         .chart-status.error {
             color: #fecaca;
-            border: 1px solid rgba(248, 113, 113, 0.28);
+            border: 1px solid rgba(248, 113, 113, 0.30);
         }
         .trend {
             grid-column: 1 / span 2;
@@ -2514,9 +2588,16 @@ class EyeMuseWindow(QMainWindow):
         </div>
     </div>
     <script>
-        const palette = ['#38bdf8', '#f59e0b', '#22c55e', '#a78bfa', '#fb7185', '#14b8a6'];
-        const textColor = '#cbd5e1';
-        const axisColor = 'rgba(148, 163, 184, 0.28)';
+        const palette = ['#67e8f9', '#38bdf8', '#22c55e', '#a78bfa', '#fb7185', '#14b8a6'];
+        const textColor = '#d7e8f9';
+        const axisColor = 'rgba(148, 163, 184, 0.18)';
+        const tooltipStyle = {
+            backgroundColor: 'rgba(4, 12, 24, 0.94)',
+            borderColor: 'rgba(125, 211, 252, 0.22)',
+            borderWidth: 1,
+            textStyle: { color: '#eff9ff' },
+            extraCssText: 'box-shadow:0 18px 36px rgba(2,6,23,0.42); border-radius:14px;'
+        };
         const commonGrid = { left: 42, right: 22, top: 52, bottom: 28 };
         window.dashboardCharts = {};
         window.dashboardReady = false;
@@ -2620,7 +2701,7 @@ class EyeMuseWindow(QMainWindow):
             window.dashboardCharts.trendChart.setOption({
                 animation: false,
                 color: palette,
-                tooltip: { trigger: 'axis' },
+                tooltip: { ...tooltipStyle, trigger: 'axis' },
                 legend: {
                     top: 12,
                     right: 10,
@@ -2673,7 +2754,7 @@ class EyeMuseWindow(QMainWindow):
 
             window.dashboardCharts.pieChart.setOption({
                 animation: false,
-                tooltip: { trigger: 'item' },
+                tooltip: { ...tooltipStyle, trigger: 'item' },
                 legend: {
                     bottom: 6,
                     textStyle: { color: textColor },
@@ -2688,7 +2769,7 @@ class EyeMuseWindow(QMainWindow):
                         formatter: '{b}\\n{d}%',
                     },
                     itemStyle: {
-                        borderColor: '#0f172a',
+                        borderColor: '#07111f',
                         borderWidth: 4,
                         borderRadius: 8,
                     },
@@ -2698,8 +2779,8 @@ class EyeMuseWindow(QMainWindow):
 
             window.dashboardCharts.barChart.setOption({
                 animation: false,
-                color: ['#22c55e'],
-                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                color: ['#22d3ee'],
+                tooltip: { ...tooltipStyle, trigger: 'axis', axisPointer: { type: 'shadow' } },
                 grid: commonGrid,
                 xAxis: {
                     type: 'category',
@@ -2716,7 +2797,11 @@ class EyeMuseWindow(QMainWindow):
                     type: 'bar',
                     barWidth: '42%',
                     data: signalDistribution.map(item => item.value),
-                    itemStyle: { borderRadius: [8, 8, 0, 0] },
+                    itemStyle: {
+                        borderRadius: [10, 10, 0, 0],
+                        shadowBlur: 16,
+                        shadowColor: 'rgba(34, 211, 238, 0.22)',
+                    },
                 }],
             }, true);
 
@@ -2752,7 +2837,7 @@ class EyeMuseWindow(QMainWindow):
             window.dashboardCharts.miniLineChart.setOption({
                 animation: false,
                 color: ['#f59e0b', '#38bdf8', '#22c55e'],
-                tooltip: { trigger: 'axis' },
+                tooltip: { ...tooltipStyle, trigger: 'axis' },
                 legend: {
                     top: 12,
                     textStyle: { color: textColor, fontSize: 11 },
@@ -2955,43 +3040,43 @@ class EyeMuseWindow(QMainWindow):
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <style>
-        html, body {{
-            margin: 0;
-            width: 100%;
-            height: 100%;
-            background:
-                radial-gradient(circle at top left, rgba(34, 197, 94, 0.08), transparent 22%),
-                radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 28%),
-                linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(15, 23, 42, 0.96));
-            color: #e2e8f0;
-            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
-        }}
-        .board {{
-            height: 100%;
-            box-sizing: border-box;
-            padding: 20px;
-            display: grid;
-            grid-template-columns: 1.5fr 1.1fr 1.1fr;
-            grid-template-rows: 1.2fr 1fr 96px;
-            gap: 20px;
-        }}
-        .card {{
-            position: relative;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(56, 189, 248, 0.16);
-            border-radius: 18px;
-            box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.36), 0 18px 38px rgba(2, 6, 23, 0.42);
-            overflow: hidden;
-        }}
-        .title {{
-            position: absolute;
-            left: 22px;
-            top: 18px;
-            color: #f8fafc;
-            font-size: 15px;
-            font-weight: 700;
-        }}
+        <style>
+            html, body {{
+                margin: 0;
+                width: 100%;
+                height: 100%;
+                background:
+                    radial-gradient(circle at 16% 10%, rgba(59, 130, 246, 0.22), transparent 28%),
+                    radial-gradient(circle at 82% 12%, rgba(34, 211, 238, 0.12), transparent 24%),
+                    linear-gradient(160deg, rgba(4, 11, 21, 0.98), rgba(7, 17, 31, 0.98) 42%, rgba(11, 23, 40, 0.96));
+                color: #e2e8f0;
+                font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+            }}
+            .board {{
+                height: 100%;
+                box-sizing: border-box;
+                padding: 22px;
+                display: grid;
+                grid-template-columns: 1.5fr 1.1fr 1.1fr;
+                grid-template-rows: 1.2fr 1fr 96px;
+                gap: 20px;
+            }}
+            .card {{
+                position: relative;
+                background: linear-gradient(145deg, rgba(9, 20, 38, 0.92), rgba(15, 35, 61, 0.84));
+                border: 1px solid rgba(125, 211, 252, 0.14);
+                border-radius: 22px;
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 24px 50px rgba(2, 6, 23, 0.46);
+                overflow: hidden;
+            }}
+            .title {{
+                position: absolute;
+                left: 22px;
+                top: 18px;
+                color: #f8fdff;
+                font-size: 15px;
+                font-weight: 700;
+            }}
         .trend {{ grid-column: 1 / span 2; grid-row: 1; }}
         .donut {{ grid-column: 3; grid-row: 1; }}
         .bar {{ grid-column: 1; grid-row: 2; }}
@@ -3007,21 +3092,21 @@ class EyeMuseWindow(QMainWindow):
         .metric {{
             padding: 14px 18px;
         }}
-        .metric-label {{
-            color: #94a3b8;
-            font-size: 12px;
-            margin-bottom: 8px;
-        }}
-        .metric-value {{
-            color: #f8fafc;
-            font-size: 30px;
-            font-weight: 700;
-        }}
-        .metric-sub {{
-            color: #38bdf8;
-            font-size: 12px;
-            margin-top: 6px;
-        }}
+            .metric-label {{
+                color: #8ba8c6;
+                font-size: 12px;
+                margin-bottom: 8px;
+            }}
+            .metric-value {{
+                color: #f8fdff;
+                font-size: 30px;
+                font-weight: 700;
+            }}
+            .metric-sub {{
+                color: #6dd3ff;
+                font-size: 12px;
+                margin-top: 6px;
+            }}
         .chart-area {{
             position: absolute;
             inset: 56px 18px 18px 18px;
@@ -3292,7 +3377,7 @@ class EyeMuseWindow(QMainWindow):
         self._refresh_report_page()
 
     def _report_storage_dir(self) -> Path:
-        report_dir = Path(__file__).resolve().parents[2] / "reports"
+        report_dir = Path(__file__).resolve().parents[2] / "data" / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
         return report_dir
 
@@ -3707,7 +3792,7 @@ class EyeMuseWindow(QMainWindow):
     def _build_health_report_html(self, *, title: str, summary: dict, range_label: str, mode_label: str) -> str:
         insights = self._report_insights(summary)
         risk_level = str(insights["risk_level"])
-        risk_color = {"低": "#58d6a9", "中": "#f0b45d", "高": "#ff7b7b"}.get(risk_level, "#f0b45d")
+        risk_color = {"低": "#25866f", "中": "#a96828", "高": "#b65353"}.get(risk_level, "#a96828")
         metrics_html = "".join(
             "<tr>"
             f"<td width='26%' class='metric-label'>{escape(label)}</td>"
@@ -3746,39 +3831,72 @@ class EyeMuseWindow(QMainWindow):
         <html>
         <head>
         <style>
-            body {{ margin: 0; background-color: #07111f; color: #dce7f5; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; }}
-            table {{ color: #dce7f5; }}
-            h1 {{ color: #f7fbff; font-size: 28px; font-weight: 700; margin: 8px 0 6px; }}
-            h2 {{ color: #f7fbff; font-size: 18px; font-weight: 700; margin: 4px 0 8px; }}
-            p {{ color: #afbdd0; font-size: 13px; line-height: 1.65; margin: 6px 0; }}
-            .canvas {{ background-color: #07111f; }}
-            .hero {{ background-color: #102942; border: 1px solid #2a516b; }}
-            .eyebrow {{ color: #65d9c6; font-size: 11px; font-weight: 700; }}
-            .range {{ color: #91a6bb; font-size: 12px; }}
-            .hero-summary {{ color: #dce7f5; font-size: 14px; line-height: 1.6; }}
-            .stat-card {{ background-color: #0c2035; border: 1px solid #24455f; }}
-            .stat-label {{ color: #8298ad; font-size: 11px; }}
-            .stat-value {{ color: #f7fbff; font-size: 20px; font-weight: 700; }}
-            .stat-note {{ color: #9fb0c3; font-size: 11px; }}
-            .section-card {{ background-color: #0b192a; border: 1px solid #1d3650; }}
-            .section-tag {{ color: #65d9c6; font-size: 11px; font-weight: 700; }}
-            .lead {{ color: #dce7f5; font-size: 14px; line-height: 1.7; }}
-            .accent-card {{ background-color: #10243a; border-left: 3px solid #65d9c6; }}
-            .accent-label {{ color: #8298ad; font-size: 11px; }}
-            .accent-value {{ color: #f7fbff; font-size: 22px; font-weight: 700; }}
-            .accent-copy {{ color: #afbdd0; font-size: 12px; line-height: 1.55; }}
-            .trend-cell {{ background-color: #0d2034; border: 1px solid #1e3d58; }}
-            .trend-value {{ color: #f0b45d; font-size: 16px; font-weight: 700; }}
-            .trend-label {{ color: #8fa3b7; font-size: 10px; }}
-            .moment-index {{ color: #65d9c6; font-size: 11px; font-weight: 700; padding: 7px 5px; }}
-            .moment-text {{ color: #dce7f5; font-size: 12px; line-height: 1.55; padding: 7px 8px; border-bottom: 1px solid #1d3650; }}
-            .metric-label {{ color: #a8b7c9; font-size: 12px; padding: 9px 10px; border-bottom: 1px solid #1d3650; }}
-            .metric-value {{ color: #f7fbff; font-size: 13px; font-weight: 700; padding: 9px 10px; border-bottom: 1px solid #1d3650; }}
-            .metric-hint {{ color: #71879d; font-size: 11px; padding: 9px 10px; border-bottom: 1px solid #1d3650; }}
-            .support-card {{ background-color: #2a2117; border: 1px solid #70522d; }}
-            .support-tag {{ color: #f0b45d; font-size: 11px; font-weight: 700; }}
-            .resource-dot {{ color: #f0b45d; font-size: 13px; }}
-            .resource-text {{ color: #d8c8b4; font-size: 12px; line-height: 1.5; }}
+            body {{ margin: 0; background-color: #EAF7FF; color: #355E96; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; }}
+            table {{ color: #355E96; }}
+            h1 {{ color: #1E4F89; font-size: 28px; font-weight: 700; margin: 8px 0 6px; }}
+            h2 {{ color: #28578F; font-size: 18px; font-weight: 700; margin: 4px 0 8px; }}
+            p {{ color: #56779F; font-size: 13px; line-height: 1.65; margin: 6px 0; }}
+            body {{
+                background:
+                    radial-gradient(circle at 14% 10%, rgba(56, 189, 248, 0.14), transparent 24%),
+                    radial-gradient(circle at 86% 12%, rgba(34, 211, 238, 0.10), transparent 22%),
+                    linear-gradient(160deg, #F4FBFF 0%, #E8F6FF 46%, #D7ECFF 100%);
+            }}
+            .canvas {{ background-color: transparent; }}
+            .hero, .section-card, .support-card, .stat-card, .accent-card, .trend-cell {{
+                box-shadow: 0 16px 34px rgba(91, 143, 196, 0.18);
+            }}
+            .hero {{
+                background: linear-gradient(145deg, rgba(236, 248, 255, 0.96), rgba(204, 231, 255, 0.92));
+                border: 1px solid rgba(255, 255, 255, 0.92);
+                border-radius: 22px;
+            }}
+            .eyebrow {{ color: #3979BC; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }}
+            .range {{ color: #6487B2; font-size: 12px; }}
+            .hero-summary {{ color: #355E96; font-size: 14px; line-height: 1.6; }}
+            .stat-card {{
+                background: linear-gradient(145deg, rgba(230, 245, 255, 0.96), rgba(203, 229, 255, 0.92));
+                border: 1px solid rgba(255, 255, 255, 0.90);
+                border-radius: 18px;
+            }}
+            .stat-label {{ color: #6387B4; font-size: 11px; }}
+            .stat-value {{ color: #1E4F89; font-size: 20px; font-weight: 700; }}
+            .stat-note {{ color: #57799F; font-size: 11px; }}
+            .section-card {{
+                background: linear-gradient(145deg, rgba(237, 248, 255, 0.96), rgba(211, 234, 255, 0.92));
+                border: 1px solid rgba(255, 255, 255, 0.92);
+                border-radius: 22px;
+            }}
+            .section-tag {{ color: #3979BC; font-size: 11px; font-weight: 700; letter-spacing: 0.7px; }}
+            .lead {{ color: #355E96; font-size: 14px; line-height: 1.7; }}
+            .accent-card {{
+                background: linear-gradient(145deg, rgba(222, 242, 255, 0.96), rgba(195, 224, 255, 0.90));
+                border-left: 3px solid #5C9DE0;
+                border-radius: 18px;
+            }}
+            .accent-label {{ color: #6387B4; font-size: 11px; }}
+            .accent-value {{ color: #1E4F89; font-size: 22px; font-weight: 700; }}
+            .accent-copy {{ color: #52749A; font-size: 12px; line-height: 1.55; }}
+            .trend-cell {{
+                background: linear-gradient(145deg, rgba(233, 246, 255, 0.96), rgba(205, 230, 255, 0.90));
+                border: 1px solid rgba(255, 255, 255, 0.90);
+                border-radius: 16px;
+            }}
+            .trend-value {{ color: #3979BC; font-size: 16px; font-weight: 700; }}
+            .trend-label {{ color: #6E8DB8; font-size: 10px; }}
+            .moment-index {{ color: #3979BC; font-size: 11px; font-weight: 700; padding: 7px 5px; }}
+            .moment-text {{ color: #355E96; font-size: 12px; line-height: 1.55; padding: 7px 8px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }}
+            .metric-label {{ color: #5C7EA8; font-size: 12px; padding: 9px 10px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }}
+            .metric-value {{ color: #1E4F89; font-size: 13px; font-weight: 700; padding: 9px 10px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }}
+            .metric-hint {{ color: #6387B4; font-size: 11px; padding: 9px 10px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }}
+            .support-card {{
+                background: linear-gradient(145deg, rgba(255, 247, 228, 0.96), rgba(255, 232, 192, 0.92));
+                border: 1px solid rgba(227, 180, 104, 0.42);
+                border-radius: 22px;
+            }}
+            .support-tag {{ color: #9B672A; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }}
+            .resource-dot {{ color: #B57A36; font-size: 13px; }}
+            .resource-text {{ color: #6E573A; font-size: 12px; line-height: 1.5; }}
         </style>
         </head>
         <body>
@@ -3891,45 +4009,55 @@ class EyeMuseWindow(QMainWindow):
         self.setFont(QFont("Segoe UI Variable", 10))
         app = QApplication.instance()
         if app is not None:
+            app.setStyle("Fusion")
             palette = QPalette()
-            palette.setColor(QPalette.Window, QColor("#0f172a"))
-            palette.setColor(QPalette.WindowText, QColor("#e2e8f0"))
-            palette.setColor(QPalette.Base, QColor("#111827"))
-            palette.setColor(QPalette.AlternateBase, QColor("#0b1120"))
-            palette.setColor(QPalette.Text, QColor("#e2e8f0"))
-            palette.setColor(QPalette.Button, QColor("#17213a"))
-            palette.setColor(QPalette.ButtonText, QColor("#e2e8f0"))
+            palette.setColor(QPalette.Window, QColor("#07111f"))
+            palette.setColor(QPalette.WindowText, QColor("#e6f1ff"))
+            palette.setColor(QPalette.Base, QColor("#071521"))
+            palette.setColor(QPalette.AlternateBase, QColor("#0b1728"))
+            palette.setColor(QPalette.Text, QColor("#e6f1ff"))
+            palette.setColor(QPalette.Button, QColor("#10233a"))
+            palette.setColor(QPalette.ButtonText, QColor("#eff9ff"))
             palette.setColor(QPalette.Highlight, QColor("#38bdf8"))
-            palette.setColor(QPalette.HighlightedText, QColor("#0f172a"))
+            palette.setColor(QPalette.HighlightedText, QColor("#04111f"))
             app.setPalette(palette)
 
         self.setStyleSheet(
             """
             QMainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #07111f, stop:0.5 #0f172a, stop:1 #111827);
+                background:
+                    radial-gradient(circle at 18% 10%, rgba(56, 189, 248, 28) 0%, rgba(56, 189, 248, 0) 28%),
+                    radial-gradient(circle at 82% 8%, rgba(34, 197, 94, 16) 0%, rgba(34, 197, 94, 0) 24%),
+                    linear-gradient(135deg, #050b14 0%, #07111f 35%, #0b1728 100%);
+                color: #e6f1ff;
+            }
+            QMainWindow::separator {
+                background: rgba(125, 211, 252, 40);
             }
             #NavBar {
-                background: rgba(15, 23, 42, 235);
-                border-bottom: 1px solid rgba(148, 163, 184, 70);
+                background: rgba(7, 17, 31, 214);
+                border-bottom: 1px solid rgba(125, 211, 252, 42);
             }
             QPushButton#NavButton {
-                background: transparent;
-                border: none;
-                border-radius: 14px;
-                color: #cbd5e1;
-                padding: 10px 22px;
-                min-height: 24px;
+                background: rgba(125, 211, 252, 10);
+                border: 1px solid transparent;
+                border-radius: 16px;
+                color: #b9d6ee;
+                padding: 10px 20px;
+                min-height: 26px;
                 font-weight: 700;
+                letter-spacing: 0.2px;
             }
             QPushButton#NavButton:hover {
                 background: rgba(56, 189, 248, 20);
-                color: #f8fafc;
+                border-color: rgba(125, 211, 252, 42);
+                color: #f4fbff;
             }
             QPushButton#NavButton:checked {
-                color: #ffffff;
-                background: rgba(56, 189, 248, 32);
-                border: 1px solid rgba(56, 189, 248, 95);
+                color: #f8fdff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(56, 189, 248, 54), stop:1 rgba(59, 130, 246, 92));
+                border: 1px solid rgba(125, 211, 252, 110);
             }
             #WindowControlGroup {
                 background: transparent;
@@ -3938,7 +4066,7 @@ class EyeMuseWindow(QMainWindow):
             QPushButton#WindowControlButton {
                 background: transparent;
                 border: none;
-                border-radius: 15px;
+                border-radius: 14px;
                 padding: 0;
             }
             QPushButton#WindowControlButton:hover {
@@ -3948,35 +4076,37 @@ class EyeMuseWindow(QMainWindow):
                 background: rgba(148, 163, 184, 42);
             }
             QPushButton#WindowCloseButton:hover {
-                background: rgba(239, 68, 68, 28);
+                background: rgba(239, 68, 68, 30);
             }
             #Page {
                 background: transparent;
             }
             #Panel {
-                background: rgba(15, 23, 42, 200);
-                border: 1px solid rgba(148, 163, 184, 60);
-                border-radius: 24px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(10, 20, 37, 232), stop:1 rgba(17, 34, 58, 216));
+                border: 1px solid rgba(125, 211, 252, 46);
+                border-radius: 26px;
             }
             #SectionTitle {
-                color: #f8fafc;
-                font-size: 20px;
+                color: #f8fdff;
+                font-size: 19px;
                 font-weight: 700;
             }
             #Title {
-                color: #f8fafc;
-                font-size: 24px;
+                color: #f8fdff;
+                font-size: 23px;
                 font-weight: 700;
             }
             #Subtitle {
-                color: #94a3b8;
+                color: #9fb8d3;
                 font-size: 12px;
             }
             #Hint {
-                color: #cbd5e1;
-                background: rgba(30, 41, 59, 160);
-                border-radius: 12px;
-                padding: 6px 10px;
+                color: #d5e7fb;
+                background: rgba(10, 24, 44, 178);
+                border: 1px solid rgba(125, 211, 252, 24);
+                border-radius: 14px;
+                padding: 8px 12px;
             }
             #Badge, #BadgeSecondary, #InlineStatus {
                 border-radius: 999px;
@@ -3984,205 +4114,216 @@ class EyeMuseWindow(QMainWindow):
                 font-weight: 600;
             }
             #Badge {
-                color: #082f49;
-                background: #7dd3fc;
+                color: #04111f;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #dff7ff, stop:1 #7dd3fc);
             }
             #BadgeSecondary {
-                color: #cbd5e1;
-                background: rgba(51, 65, 85, 210);
+                color: #d0e4f9;
+                background: rgba(22, 39, 61, 220);
+                border: 1px solid rgba(125, 211, 252, 26);
             }
             QPushButton#CompanionModeButton {
-                background: rgba(15, 23, 42, 150);
-                border: 1px solid rgba(56, 189, 248, 85);
+                background: rgba(10, 24, 44, 190);
+                border: 1px solid rgba(125, 211, 252, 90);
                 border-radius: 999px;
-                color: #e2e8f0;
+                color: #eff9ff;
                 padding: 6px 14px;
                 min-height: 12px;
             }
             QPushButton#CompanionModeButton:hover {
-                background: rgba(14, 165, 233, 46);
-                color: #f8fafc;
+                background: rgba(14, 165, 233, 54);
+                color: #f8fdff;
             }
             #InlineStatus {
                 color: #dbeafe;
-                background: rgba(14, 165, 233, 90);
+                background: rgba(14, 165, 233, 102);
                 min-width: 56px;
                 qproperty-alignment: AlignCenter;
             }
             #StatCard {
-                background: rgba(15, 23, 42, 200);
-                border: 1px solid rgba(56, 189, 248, 80);
-                border-radius: 16px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(8, 20, 38, 230), stop:1 rgba(16, 35, 58, 216));
+                border: 1px solid rgba(125, 211, 252, 54);
+                border-radius: 18px;
             }
             #CardTitle {
-                color: #94a3b8;
+                color: #90a8c6;
                 font-size: 10px;
                 letter-spacing: 1px;
                 text-transform: uppercase;
             }
             #CardValue {
-                color: #f8fafc;
+                color: #f8fdff;
                 font-size: 12px;
                 font-weight: 600;
             }
             #ConversationView {
-                background: rgba(2, 6, 23, 190);
-                border: 1px solid rgba(148, 163, 184, 80);
-                border-radius: 18px;
+                background: rgba(3, 9, 19, 198);
+                border: 1px solid rgba(125, 211, 252, 50);
+                border-radius: 20px;
                 padding: 10px;
             }
             #OverviewPanel {
-                background: rgba(2, 6, 23, 190);
-                border: 1px solid rgba(148, 163, 184, 80);
-                border-radius: 18px;
+                background: rgba(3, 9, 19, 198);
+                border: 1px solid rgba(125, 211, 252, 50);
+                border-radius: 20px;
                 padding: 12px;
-                color: #e2e8f0;
+                color: #e6f1ff;
                 font-size: 14px;
             }
             #ReportBrowser {
-                background: #07111f;
-                border: 1px solid rgba(73, 108, 138, 130);
-                border-radius: 18px;
+                background: rgba(4, 12, 24, 210);
+                border: 1px solid rgba(125, 211, 252, 38);
+                border-radius: 20px;
                 padding: 0;
-                color: #dce7f5;
+                color: #e6f1ff;
                 font-size: 14px;
-                selection-background-color: #2f766f;
+                selection-background-color: rgba(56, 189, 248, 120);
             }
-            #ReportBrowser QScrollBar:vertical {
-                background: #07111f;
-                width: 12px;
-                margin: 5px 2px 5px 2px;
+            QTextBrowser QScrollBar:vertical, QPlainTextEdit QScrollBar:vertical {
+                background: transparent;
+                width: 11px;
+                margin: 6px 2px 6px 2px;
                 border: none;
             }
-            #ReportBrowser QScrollBar::handle:vertical {
-                background: #2b6074;
+            QTextBrowser QScrollBar::handle:vertical, QPlainTextEdit QScrollBar::handle:vertical {
+                background: rgba(56, 189, 248, 86);
                 min-height: 52px;
                 border-radius: 5px;
             }
-            #ReportBrowser QScrollBar::handle:vertical:hover {
-                background: #4ab8ac;
+            QTextBrowser QScrollBar::handle:vertical:hover, QPlainTextEdit QScrollBar::handle:vertical:hover {
+                background: rgba(125, 211, 252, 126);
             }
-            #ReportBrowser QScrollBar::add-line:vertical,
-            #ReportBrowser QScrollBar::sub-line:vertical {
+            QTextBrowser QScrollBar::add-line:vertical,
+            QTextBrowser QScrollBar::sub-line:vertical,
+            QPlainTextEdit QScrollBar::add-line:vertical,
+            QPlainTextEdit QScrollBar::sub-line:vertical {
                 height: 0;
                 border: none;
                 background: transparent;
             }
-            #ReportBrowser QScrollBar::add-page:vertical,
-            #ReportBrowser QScrollBar::sub-page:vertical {
+            QTextBrowser QScrollBar::add-page:vertical,
+            QTextBrowser QScrollBar::sub-page:vertical,
+            QPlainTextEdit QScrollBar::add-page:vertical,
+            QPlainTextEdit QScrollBar::sub-page:vertical {
                 background: transparent;
             }
             #CameraPreview {
-                background: rgba(2, 6, 23, 190);
-                border: 1px dashed rgba(148, 163, 184, 100);
-                border-radius: 18px;
-                color: #94a3b8;
+                background: rgba(2, 8, 18, 194);
+                border: 1px dashed rgba(125, 211, 252, 84);
+                border-radius: 20px;
+                color: #9fb8d3;
                 margin-top: 2px;
                 margin-bottom: 2px;
             }
             QProgressBar {
-                background: rgba(15, 23, 42, 220);
-                border: 1px solid rgba(148, 163, 184, 80);
+                background: rgba(8, 20, 38, 220);
+                border: 1px solid rgba(125, 211, 252, 54);
                 border-radius: 12px;
-                color: #e2e8f0;
+                color: #e6f1ff;
                 text-align: center;
                 min-height: 24px;
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #22d3ee, stop:1 #3b82f6);
+                    stop:0 #67e8f9, stop:1 #3b82f6);
                 border-radius: 10px;
             }
             QLineEdit {
-                background: rgba(15, 23, 42, 230);
-                border: 1px solid rgba(148, 163, 184, 80);
+                background: rgba(8, 20, 38, 232);
+                border: 1px solid rgba(125, 211, 252, 52);
                 border-radius: 16px;
                 padding: 12px 14px;
-                color: #e2e8f0;
+                color: #e6f1ff;
+            }
+            QLineEdit:focus, QDateEdit:focus {
+                border: 1px solid rgba(125, 211, 252, 126);
+                background: rgba(10, 24, 44, 240);
             }
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #38bdf8, stop:1 #0ea5e9);
-                border: none;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #67e8f9, stop:1 #3b82f6);
+                border: 1px solid rgba(191, 219, 254, 88);
                 border-radius: 16px;
-                color: #0f172a;
+                color: #04111f;
                 font-weight: 700;
                 padding: 11px 16px;
                 min-height: 18px;
             }
             QPushButton#GhostButton {
-                background: rgba(15, 23, 42, 120);
-                border: 1px solid rgba(226, 232, 240, 80);
-                color: #e2e8f0;
+                background: rgba(10, 24, 44, 160);
+                border: 1px solid rgba(125, 211, 252, 48);
+                color: #e6f1ff;
             }
             #DashboardSegment {
-                background: rgba(15, 23, 42, 185);
-                border: 1px solid rgba(56, 189, 248, 78);
-                border-radius: 18px;
+                background: rgba(10, 24, 44, 196);
+                border: 1px solid rgba(125, 211, 252, 48);
+                border-radius: 20px;
             }
             QPushButton#DashboardFilterButton {
                 background: transparent;
                 border: 1px solid transparent;
-                color: #cbd5e1;
+                color: #bfd3e8;
                 padding: 9px 20px;
                 min-height: 16px;
                 border-radius: 12px;
             }
             QPushButton#DashboardFilterButton:hover {
                 background: rgba(14, 165, 233, 34);
-                color: #f8fafc;
+                color: #f8fdff;
             }
             QPushButton#DashboardFilterButton:checked {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(56, 189, 248, 180), stop:1 rgba(14, 165, 233, 180));
+                    stop:0 rgba(56, 189, 248, 184), stop:1 rgba(14, 165, 233, 184));
                 border: 1px solid rgba(125, 211, 252, 140);
-                color: #f8fafc;
+                color: #f8fdff;
             }
             #DashboardDateRange {
-                background: rgba(15, 23, 42, 185);
-                border: 1px solid rgba(148, 163, 184, 78);
-                border-radius: 18px;
+                background: rgba(10, 24, 44, 196);
+                border: 1px solid rgba(125, 211, 252, 48);
+                border-radius: 20px;
             }
             #DashboardDateLabel {
-                color: #cbd5e1;
+                color: #bfd3e8;
                 font-size: 12px;
                 font-weight: 600;
                 padding-right: 4px;
             }
             QDateEdit#DashboardDateEdit {
-                background: rgba(2, 6, 23, 180);
-                border: 1px solid rgba(56, 189, 248, 70);
+                background: rgba(4, 12, 24, 210);
+                border: 1px solid rgba(125, 211, 252, 60);
                 border-radius: 12px;
-                color: #e2e8f0;
+                color: #e6f1ff;
                 padding: 7px 10px;
                 min-width: 116px;
             }
             QPushButton#DashboardApplyButton {
-                background: rgba(30, 41, 59, 210);
-                border: 1px solid rgba(148, 163, 184, 90);
-                color: #e2e8f0;
+                background: rgba(14, 32, 54, 220);
+                border: 1px solid rgba(125, 211, 252, 72);
+                color: #e6f1ff;
                 border-radius: 12px;
                 padding: 8px 16px;
                 min-height: 16px;
             }
             QPushButton#DashboardApplyButton:hover {
                 background: rgba(14, 165, 233, 48);
-                color: #f8fafc;
+                color: #f8fdff;
             }
             QPushButton#DashboardApplyButton[active="true"] {
                 background: rgba(14, 165, 233, 118);
                 border: 1px solid rgba(125, 211, 252, 150);
-                color: #f8fafc;
+                color: #f8fdff;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #7dd3fc, stop:1 #38bdf8);
+                    stop:0 #9ae6ff, stop:1 #38bdf8);
             }
             QPushButton:pressed {
-                background: #0284c7;
+                background: #0ea5e9;
             }
             QCheckBox {
-                color: #e2e8f0;
+                color: #dbeafe;
                 spacing: 8px;
                 font-weight: 600;
             }
@@ -4190,16 +4331,42 @@ class EyeMuseWindow(QMainWindow):
                 width: 18px;
                 height: 18px;
                 border-radius: 9px;
-                border: 1px solid rgba(148, 163, 184, 160);
-                background: rgba(15, 23, 42, 220);
+                border: 1px solid rgba(125, 211, 252, 72);
+                background: rgba(8, 20, 38, 220);
             }
             QCheckBox::indicator:checked {
-                background: #22c55e;
-                border-color: #22c55e;
+                background: #22d3ee;
+                border-color: #67e8f9;
             }
             QTextBrowser {
-                color: #e2e8f0;
+                color: #e6f1ff;
                 font-size: 14px;
+            }
+            QMenu {
+                background: rgba(7, 17, 31, 245);
+                color: #e6f1ff;
+                border: 1px solid rgba(125, 211, 252, 40);
+                border-radius: 14px;
+                padding: 6px;
+            }
+            QMenu::item {
+                padding: 8px 16px;
+                border-radius: 10px;
+            }
+            QMenu::item:selected {
+                background: rgba(56, 189, 248, 26);
+            }
+            QStatusBar {
+                background: rgba(7, 17, 31, 214);
+                color: #bfd3e8;
+                border-top: 1px solid rgba(125, 211, 252, 26);
+            }
+            QToolTip {
+                background: rgba(7, 17, 31, 245);
+                color: #e6f1ff;
+                border: 1px solid rgba(125, 211, 252, 54);
+                padding: 6px 10px;
+                border-radius: 10px;
             }
             """
         )
@@ -4365,20 +4532,21 @@ class EyeMuseWindow(QMainWindow):
         for item in self._conversation[-6:]:
             if item.role == "user":
                 align = "right"
-                bubble = "#dbeafe"
-                color = "#0f172a"
+                bubble = "linear-gradient(135deg, rgba(34, 197, 246, 0.28), rgba(37, 99, 235, 0.50))"
+                color = "#eff6ff"
             elif item.role == "eyeMuse":
                 align = "left"
-                bubble = "#ecfeff"
-                color = "#164e63"
+                bubble = "linear-gradient(135deg, rgba(22, 78, 99, 0.78), rgba(8, 47, 73, 0.92))"
+                color = "#dff8ff"
             else:
                 align = "center"
-                bubble = "#f8fafc"
-                color = "#64748b"
+                bubble = "linear-gradient(135deg, rgba(30, 41, 59, 0.92), rgba(15, 23, 42, 0.96))"
+                color = "#cbd5e1"
             html.append(
                 "<div style='margin:6px 0; text-align:%s;'>"
                 "<span style='display:inline-block; max-width:92%%; padding:8px 10px; "
-                "border-radius:14px; background:%s; color:%s; font-size:12px; line-height:1.5;'>%s</span>"
+                "border-radius:14px; background:%s; border:1px solid rgba(125,211,252,0.18); "
+                "box-shadow:0 10px 24px rgba(2,6,23,0.26); color:%s; font-size:12px; line-height:1.5;'>%s</span>"
                 "</div>"
                 % (align, bubble, color, escape(item.text))
             )
@@ -4567,7 +4735,8 @@ class EyeMuseWindow(QMainWindow):
         )
 
     def _enter_default_companion_mode(self) -> None:
-        self._start_camera()
+        if _env_flag("EYEMUSE_AUTOSTART_CAMERA", False):
+            self._start_camera()
         if self._should_show_companion():
             companion_window = self._ensure_companion_window()
             self._place_companion_window()
@@ -4864,6 +5033,25 @@ class EyeMuseWindow(QMainWindow):
         self._stop_camera()
         super().closeEvent(event)
 
+    def _apply_theme(self) -> None:
+        apply_modern_theme(self)
+
+    def _build_dashboard_chart_html(self) -> str:
+        return build_dashboard_chart_html()
+
+    def _build_dashboard_fallback_html(self, payload: dict) -> str:
+        return build_dashboard_fallback_html(payload)
+
+    def _render_companion_chat_html(self) -> str:
+        return build_companion_chat_html(self._conversation)
+
+    def _refresh_conversation(self) -> None:
+        self.conversation_view.setHtml(build_main_conversation_html(self._conversation))
+        self.conversation_view.verticalScrollBar().setValue(self.conversation_view.verticalScrollBar().maximum())
+        if self._companion_window is not None:
+            self._companion_window.set_chat_history_html(self._render_companion_chat_html())
+        self._schedule_analytics_refresh()
+
 
 def _select_font() -> None:
     if sys.platform.startswith("win"):
@@ -4872,6 +5060,8 @@ def _select_font() -> None:
 
 def run() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(True)
+    _enable_crash_logging()
     _select_font()
     window = EyeMuseWindow()
     window.show()

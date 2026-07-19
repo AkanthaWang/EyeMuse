@@ -46,6 +46,26 @@ def _prepare_yolo_config_dir() -> Path:
     return config_dir
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_yolo_device(torch_module) -> tuple[str, bool]:
+    requested = os.environ.get("EYEMUSE_YOLO_DEVICE", "cpu").strip().lower()
+    if requested == "auto":
+        device = "cuda:0" if torch_module.cuda.is_available() else "cpu"
+    elif requested.startswith("cuda"):
+        device = requested if torch_module.cuda.is_available() else "cpu"
+    else:
+        device = "cpu"
+
+    use_half = device.startswith("cuda") and _env_flag("EYEMUSE_YOLO_HALF", False)
+    return device, use_half
+
+
 class YOLOFaceDetector:
     def __init__(
         self,
@@ -73,8 +93,7 @@ class YOLOFaceDetector:
         self._max_num_faces = max_num_faces
         self._min_detection_confidence = min_detection_confidence
         self._nms_threshold = nms_threshold
-        self._device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        self._use_half = self._device.startswith("cuda")
+        self._device, self._use_half = _resolve_yolo_device(torch)
 
         try:
             self._model = YOLO(str(self._model_path))

@@ -2,39 +2,72 @@
         <html>
         <head>
         <style>
-            body { margin: 0; background-color: #07111f; color: #dce7f5; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; }
-            table { color: #dce7f5; }
-            h1 { color: #f7fbff; font-size: 28px; font-weight: 700; margin: 8px 0 6px; }
-            h2 { color: #f7fbff; font-size: 18px; font-weight: 700; margin: 4px 0 8px; }
-            p { color: #afbdd0; font-size: 13px; line-height: 1.65; margin: 6px 0; }
-            .canvas { background-color: #07111f; }
-            .hero { background-color: #102942; border: 1px solid #2a516b; }
-            .eyebrow { color: #65d9c6; font-size: 11px; font-weight: 700; }
-            .range { color: #91a6bb; font-size: 12px; }
-            .hero-summary { color: #dce7f5; font-size: 14px; line-height: 1.6; }
-            .stat-card { background-color: #0c2035; border: 1px solid #24455f; }
-            .stat-label { color: #8298ad; font-size: 11px; }
-            .stat-value { color: #f7fbff; font-size: 20px; font-weight: 700; }
-            .stat-note { color: #9fb0c3; font-size: 11px; }
-            .section-card { background-color: #0b192a; border: 1px solid #1d3650; }
-            .section-tag { color: #65d9c6; font-size: 11px; font-weight: 700; }
-            .lead { color: #dce7f5; font-size: 14px; line-height: 1.7; }
-            .accent-card { background-color: #10243a; border-left: 3px solid #65d9c6; }
-            .accent-label { color: #8298ad; font-size: 11px; }
-            .accent-value { color: #f7fbff; font-size: 22px; font-weight: 700; }
-            .accent-copy { color: #afbdd0; font-size: 12px; line-height: 1.55; }
-            .trend-cell { background-color: #0d2034; border: 1px solid #1e3d58; }
-            .trend-value { color: #f0b45d; font-size: 16px; font-weight: 700; }
-            .trend-label { color: #8fa3b7; font-size: 10px; }
-            .moment-index { color: #65d9c6; font-size: 11px; font-weight: 700; padding: 7px 5px; }
-            .moment-text { color: #dce7f5; font-size: 12px; line-height: 1.55; padding: 7px 8px; border-bottom: 1px solid #1d3650; }
-            .metric-label { color: #a8b7c9; font-size: 12px; padding: 9px 10px; border-bottom: 1px solid #1d3650; }
-            .metric-value { color: #f7fbff; font-size: 13px; font-weight: 700; padding: 9px 10px; border-bottom: 1px solid #1d3650; }
-            .metric-hint { color: #71879d; font-size: 11px; padding: 9px 10px; border-bottom: 1px solid #1d3650; }
-            .support-card { background-color: #2a2117; border: 1px solid #70522d; }
-            .support-tag { color: #f0b45d; font-size: 11px; font-weight: 700; }
-            .resource-dot { color: #f0b45d; font-size: 13px; }
-            .resource-text { color: #d8c8b4; font-size: 12px; line-height: 1.5; }
+            body { margin: 0; background-color: #EAF7FF; color: #355E96; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; }
+            table { color: #355E96; }
+            h1 { color: #1E4F89; font-size: 28px; font-weight: 700; margin: 8px 0 6px; }
+            h2 { color: #28578F; font-size: 18px; font-weight: 700; margin: 4px 0 8px; }
+            p { color: #56779F; font-size: 13px; line-height: 1.65; margin: 6px 0; }
+            body {
+                background:
+                    radial-gradient(circle at 14% 10%, rgba(56, 189, 248, 0.14), transparent 24%),
+                    radial-gradient(circle at 86% 12%, rgba(34, 211, 238, 0.10), transparent 22%),
+                    linear-gradient(160deg, #F4FBFF 0%, #E8F6FF 46%, #D7ECFF 100%);
+            }
+            .canvas { background-color: transparent; }
+            .hero, .section-card, .support-card, .stat-card, .accent-card, .trend-cell {
+                box-shadow: 0 16px 34px rgba(91, 143, 196, 0.18);
+            }
+            .hero {
+                background: linear-gradient(145deg, rgba(236, 248, 255, 0.96), rgba(204, 231, 255, 0.92));
+                border: 1px solid rgba(255, 255, 255, 0.92);
+                border-radius: 22px;
+            }
+            .eyebrow { color: #3979BC; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; }
+            .range { color: #6487B2; font-size: 12px; }
+            .hero-summary { color: #355E96; font-size: 14px; line-height: 1.6; }
+            .stat-card {
+                background: linear-gradient(145deg, rgba(230, 245, 255, 0.96), rgba(203, 229, 255, 0.92));
+                border: 1px solid rgba(255, 255, 255, 0.90);
+                border-radius: 18px;
+            }
+            .stat-label { color: #6387B4; font-size: 11px; }
+            .stat-value { color: #1E4F89; font-size: 20px; font-weight: 700; }
+            .stat-note { color: #57799F; font-size: 11px; }
+            .section-card {
+                background: linear-gradient(145deg, rgba(237, 248, 255, 0.96), rgba(211, 234, 255, 0.92));
+                border: 1px solid rgba(255, 255, 255, 0.92);
+                border-radius: 22px;
+            }
+            .section-tag { color: #3979BC; font-size: 11px; font-weight: 700; letter-spacing: 0.7px; }
+            .lead { color: #355E96; font-size: 14px; line-height: 1.7; }
+            .accent-card {
+                background: linear-gradient(145deg, rgba(222, 242, 255, 0.96), rgba(195, 224, 255, 0.90));
+                border-left: 3px solid #5C9DE0;
+                border-radius: 18px;
+            }
+            .accent-label { color: #6387B4; font-size: 11px; }
+            .accent-value { color: #1E4F89; font-size: 22px; font-weight: 700; }
+            .accent-copy { color: #52749A; font-size: 12px; line-height: 1.55; }
+            .trend-cell {
+                background: linear-gradient(145deg, rgba(233, 246, 255, 0.96), rgba(205, 230, 255, 0.90));
+                border: 1px solid rgba(255, 255, 255, 0.90);
+                border-radius: 16px;
+            }
+            .trend-value { color: #3979BC; font-size: 16px; font-weight: 700; }
+            .trend-label { color: #6E8DB8; font-size: 10px; }
+            .moment-index { color: #3979BC; font-size: 11px; font-weight: 700; padding: 7px 5px; }
+            .moment-text { color: #355E96; font-size: 12px; line-height: 1.55; padding: 7px 8px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }
+            .metric-label { color: #5C7EA8; font-size: 12px; padding: 9px 10px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }
+            .metric-value { color: #1E4F89; font-size: 13px; font-weight: 700; padding: 9px 10px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }
+            .metric-hint { color: #6387B4; font-size: 11px; padding: 9px 10px; border-bottom: 1px solid rgba(116, 162, 210, 0.20); }
+            .support-card {
+                background: linear-gradient(145deg, rgba(255, 247, 228, 0.96), rgba(255, 232, 192, 0.92));
+                border: 1px solid rgba(227, 180, 104, 0.42);
+                border-radius: 22px;
+            }
+            .support-tag { color: #9B672A; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+            .resource-dot { color: #B57A36; font-size: 13px; }
+            .resource-text { color: #6E573A; font-size: 12px; line-height: 1.5; }
         </style>
         </head>
         <body>
@@ -60,7 +93,7 @@
                         </td>
                         <td width="33%" valign="top" class="stat-card">
                             <div class="stat-label">风险等级</div>
-                            <div class="stat-value" style="color:#58d6a9;">低</div>
+                            <div class="stat-value" style="color:#25866f;">低</div>
                             <div class="stat-note">156 条有效样本</div>
                         </td>
                     </tr>
