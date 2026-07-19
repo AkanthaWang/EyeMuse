@@ -12,15 +12,7 @@ from typing import Optional
 import sys
 
 import cv2
-<<<<<<< Updated upstream
-from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
-=======
-<<<<<<< HEAD
-from PySide6.QtCore import QDate, QDateTime, QObject, QPoint, QRectF, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
-=======
-from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
->>>>>>> 39afed2fabaeb4819b2d322db3b974dccbf90a19
->>>>>>> Stashed changes
+from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QRectF, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QMovie, QPainter, QPixmap, QPalette
 from PySide6.QtWidgets import (
     QApplication,
