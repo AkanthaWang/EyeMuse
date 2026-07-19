@@ -105,3 +105,148 @@ Thread 0x00008e44 (most recent call first):
 Current thread 0x000030c4 (most recent call first):
   File "D:\Github\EyeMuse\frontend\src\app.py", line 5068 in run
   File "D:\Github\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x0000021c (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x00003fb4 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x000070c0 (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5068 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x000087d0 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x00008d64 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x00009388 (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5068 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x00004ed8 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x0000953c (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x00005ff0 (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5068 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x00009370 (most recent call first):
+  File "<frozen importlib._bootstrap>", line 1087 in _handle_fromlist
+  File "D:\py3.10\lib\site-packages\mediapipe\tasks\python\vision\pose_landmarker.py", line 114 in <module>
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 883 in exec_module
+  File "<frozen importlib._bootstrap>", line 688 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1006 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1027 in _find_and_load
+  File "D:\py3.10\lib\site-packages\mediapipe\tasks\python\vision\__init__.py", line 30 in <module>
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 883 in exec_module
+  File "<frozen importlib._bootstrap>", line 688 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1006 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 1027 in _find_and_load
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1078 in _handle_fromlist
+  File "D:\py3.10\lib\site-packages\mediapipe\tasks\python\__init__.py", line 22 in <module>
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap_external>", line 883 in exec_module
+  File "<frozen importlib._bootstrap>", line 688 in _load_unlocked
+  File "<frozen importlib._bootstrap>", line 1006 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 705 in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883 in exec_module
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1087 in _handle_fromlist
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1024 in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1016 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 705 in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883 in exec_module
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1024 in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1016 in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 705 in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883 in exec_module
+  File "<frozen importlib._bootstrap>", line 241 in _call_with_frames_removed
+
+Thread 0x0000ac2c (most recent call first):
+  File "D:\py3.10\lib\ssl.py", line 1130 in read
+  File "D:\py3.10\lib\ssl.py", line 1274 in recv_into
+  File "D:\py3.10\lib\socket.py", line 705 in readinto
+  File "D:\py3.10\lib\http\client.py", line 525 in _read_next_chunk_size
+  File "D:\py3.10\lib\http\client.py", line 565 in _get_chunk_left
+  File "D:\py3.10\lib\http\client.py", line 702 in _peek_chunked
+  File "D:\py3.10\lib\http\client.py", line 666 in peek
+  File "D:\py3.10\lib\http\client.py", line 674 in readline
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\backend\app\modules\llm\client.py", line 224 in _iter_stream_events
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\backend\app\modules\llm\client.py", line 113 in stream_reply
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 395 in run
+
+Thread 0x0000330c (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x00006ce4 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x000089bc (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5304 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x0000c158 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x0000c0e0 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x00002654 (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5321 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>

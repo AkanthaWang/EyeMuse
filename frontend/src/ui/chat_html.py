@@ -9,23 +9,23 @@ def _items(items: Iterable[object]) -> list[object]:
 
 
 def build_companion_chat_html(conversation_items: Iterable[object]) -> str:
-    items = _items(conversation_items)
+    items = [
+        item
+        for item in _items(conversation_items)
+        if getattr(item, "role", "") == "user"
+    ]
     if not items:
-        return "<p style='color:#6E8DB8; text-align:center; margin:8px 0;'>点一下“对话”开始聊天</p>"
+        return (
+            "<p style='color:#6E8DB8; text-align:center; margin:8px 0;'>"
+            "输入消息后，EyeMuse 会在上方气泡回复"
+            "</p>"
+        )
 
     parts: list[str] = []
     for item in items[-6:]:
-        role = getattr(item, "role", "")
         text = escape(str(getattr(item, "text", ""))).replace("\n", "<br>")
-        if role == "user":
-            align = "right"
-            bubble = "background: linear-gradient(135deg, rgba(210, 235, 255, 0.92), rgba(165, 211, 255, 0.88)); border: 1px solid rgba(255, 255, 255, 0.90); color: #164A83;"
-        elif role == "eyeMuse":
-            align = "left"
-            bubble = "background: linear-gradient(135deg, rgba(228, 242, 255, 0.78), rgba(195, 221, 255, 0.72)); border: 1px solid rgba(255, 255, 255, 0.84); color: #3B679E;"
-        else:
-            align = "center"
-            bubble = "background: rgba(233, 246, 255, 0.62); border: 1px solid rgba(255, 255, 255, 0.82); color: #6E8DB8;"
+        align = "right"
+        bubble = "background: linear-gradient(135deg, rgba(210, 235, 255, 0.92), rgba(165, 211, 255, 0.88)); border: 1px solid rgba(255, 255, 255, 0.90); color: #164A83;"
         parts.append(
             "<div style='margin:7px 0; text-align:%s;'>"
             "<span style='display:inline-block; max-width:92%%; padding:8px 11px; border-radius:14px; %s "
