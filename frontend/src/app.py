@@ -645,8 +645,30 @@ class CompanionPetWindow(QWidget):
             "QPushButton:disabled { background: #d8c7a8; color: #fffaf0; }"
         )
         self.rest_start_button.clicked.connect(self._emit_rest_requested)
+        self.rest_close_button = QPushButton("×")
+        self.rest_close_button.setToolTip("暂不休息")
+        self.rest_close_button.setAccessibleName("关闭休息选择")
+        self.rest_close_button.setCursor(Qt.PointingHandCursor)
+        self.rest_close_button.setFixedSize(24, 24)
+        self.rest_close_button.setStyleSheet(
+            "QPushButton {"
+            "background: rgba(139, 112, 69, 0.10);"
+            "border: 1px solid rgba(139, 112, 69, 0.16);"
+            "border-radius: 12px;"
+            "color: #927c59;"
+            "font-size: 16px;"
+            "font-weight: 700;"
+            "padding: 0;"
+            "}"
+            "QPushButton:hover {"
+            "background: rgba(139, 112, 69, 0.20);"
+            "color: #6f5a39;"
+            "}"
+        )
+        self.rest_close_button.clicked.connect(self._dismiss_rest_prompt)
         rest_layout.addWidget(self.rest_duration_combo, 1)
         rest_layout.addWidget(self.rest_start_button)
+        rest_layout.addWidget(self.rest_close_button)
         self.rest_frame.hide()
         layout.addWidget(self.rest_frame)
 
@@ -655,6 +677,7 @@ class CompanionPetWindow(QWidget):
         self._bubble_timer.timeout.connect(self._hide_bubble)
         self._rest_active = False
         self._rest_mode_available = False
+        self._rest_prompt_dismissed = False
 
         self.avatar = PetAvatar(
             max_movie_size=QSize(220, 220),
@@ -919,21 +942,38 @@ class CompanionPetWindow(QWidget):
         duration_minutes = int(self.rest_duration_combo.currentData() or 5)
         self.rest_requested.emit(duration_minutes)
 
+    def _dismiss_rest_prompt(self) -> None:
+        if self._rest_active:
+            return
+        self._rest_prompt_dismissed = True
+        self.rest_frame.hide()
+        self._apply_window_size()
+
     def set_rest_mode_available(self, available: bool) -> None:
+        if not available or (available and not self._rest_mode_available):
+            self._rest_prompt_dismissed = False
         self._rest_mode_available = available
-        self.rest_frame.setVisible(available or self._rest_active)
+        self.rest_close_button.setVisible(available and not self._rest_active)
+        self.rest_frame.setVisible(
+            self._rest_active or (available and not self._rest_prompt_dismissed)
+        )
         self._apply_window_size()
 
     def set_rest_progress(self, active: bool, remaining_seconds: int = 0) -> None:
         self._rest_active = active
         self.rest_duration_combo.setEnabled(not active)
         self.rest_start_button.setEnabled(not active)
+        self.rest_close_button.setVisible(
+            not active and self._rest_mode_available and not self._rest_prompt_dismissed
+        )
         if active:
             minutes, seconds = divmod(max(0, remaining_seconds), 60)
             self.rest_start_button.setText(f"休息中 {minutes:02d}:{seconds:02d}")
         else:
             self.rest_start_button.setText("开始休息")
-        self.rest_frame.setVisible(self._rest_mode_available or active)
+        self.rest_frame.setVisible(
+            active or (self._rest_mode_available and not self._rest_prompt_dismissed)
+        )
         self._apply_window_size()
 
     def set_camera_enabled(self, enabled: bool) -> None:

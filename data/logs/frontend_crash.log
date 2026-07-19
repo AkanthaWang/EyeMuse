@@ -250,3 +250,68 @@ Thread 0x0000c0e0 (most recent call first):
 Current thread 0x00002654 (most recent call first):
   File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5321 in run
   File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x000086d8 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x00005ac0 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x0000c6e8 (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5321 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x00005aa4 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x00000710 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x00009c2c (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5321 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
+Windows fatal exception: code 0x8001010d
+
+Thread 0x00009dec (most recent call first):
+  File "D:\py3.10\lib\site-packages\mediapipe\tasks\python\vision\core\base_vision_task_api.py", line 95 in _process_image_data
+  File "D:\py3.10\lib\site-packages\mediapipe\tasks\python\vision\face_landmarker.py", line 3141 in detect
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\backend\app\modules\realtime_face_detection\mediapipe_analyzer.py", line 111 in _detect_landmarks
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\backend\app\modules\realtime_face_detection\mediapipe_analyzer.py", line 133 in _collect_full_frame_observations
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\backend\app\modules\realtime_face_detection\mediapipe_analyzer.py", line 255 in detect
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 314 in _read_frame
+
+Thread 0x0000b840 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Thread 0x00007688 (most recent call first):
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 189 in __iter__
+  File "D:\py3.10\lib\site-packages\pynput\_util\win32.py", line 356 in _run
+  File "D:\py3.10\lib\site-packages\pynput\_util\__init__.py", line 216 in run
+  File "D:\py3.10\lib\threading.py", line 1016 in _bootstrap_inner
+  File "D:\py3.10\lib\threading.py", line 973 in _bootstrap
+
+Current thread 0x0000b99c (most recent call first):
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\src\app.py", line 5361 in run
+  File "D:\DaSESS\EyeMuse\EyeMuse\EyeMuse\frontend\main.py", line 19 in <module>
