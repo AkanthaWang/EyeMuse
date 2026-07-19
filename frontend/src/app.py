@@ -12,7 +12,15 @@ from typing import Optional
 import sys
 
 import cv2
+<<<<<<< Updated upstream
 from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
+=======
+<<<<<<< HEAD
+from PySide6.QtCore import QDate, QDateTime, QObject, QPoint, QRectF, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
+=======
+from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
+>>>>>>> 39afed2fabaeb4819b2d322db3b974dccbf90a19
+>>>>>>> Stashed changes
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QMovie, QPainter, QPixmap, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -509,8 +517,8 @@ class CompanionPetWindow(QWidget):
         self.setObjectName("CompanionPetWindow")
         self.setToolTip("左键拖动，鼠标中键展开下方工具栏")
         self._compact_size = QSize(280, 314)
-        self._expanded_size = QSize(280, 338)
-        self._chat_expanded_size = QSize(300, 452)
+        self._expanded_size = QSize(280, 344)
+        self._chat_expanded_size = QSize(300, 482)
         self.setFixedSize(self._compact_size)
 
         layout = QVBoxLayout(self)
@@ -640,40 +648,61 @@ class CompanionPetWindow(QWidget):
             "border-radius: 14px;"
             "padding: 1px;"
         )
-        toolbar_layout = QHBoxLayout(self.toolbar_frame)
-        toolbar_layout.setContentsMargins(8, 3, 8, 3)
-        toolbar_layout.setSpacing(4)
+        self.toolbar_frame.setFixedHeight(62)
+        toolbar_layout = QVBoxLayout(self.toolbar_frame)
+        toolbar_layout.setContentsMargins(8, 4, 8, 4)
+        toolbar_layout.setSpacing(2)
+        primary_toolbar_row = QHBoxLayout()
+        primary_toolbar_row.setContentsMargins(0, 0, 0, 0)
+        primary_toolbar_row.setSpacing(4)
+        secondary_toolbar_row = QHBoxLayout()
+        secondary_toolbar_row.setContentsMargins(0, 0, 0, 0)
+        secondary_toolbar_row.setSpacing(4)
+        toolbar_button_style = (
+            "QPushButton {"
+            "background: rgba(255,255,255,0.0);"
+            "border: none;"
+            "border-radius: 10px;"
+            "color: #64748b;"
+            "font-size: 11px;"
+            "font-weight: 700;"
+            "padding: 4px 8px;"
+            "}"
+            "QPushButton:hover {"
+            "background: rgba(148,163,184,0.14);"
+            "color: #334155;"
+            "}"
+        )
         self._toolbar_buttons: dict[str, QPushButton] = {}
         for action_key, label in (
             ("home", "首页"),
             ("chat", "对话"),
             ("camera", "摄像头"),
-            ("exit", "退出"),
         ):
             button = QPushButton(label)
             button.setCursor(Qt.PointingHandCursor)
             button.setMinimumHeight(22)
-            button.setStyleSheet(
-                "QPushButton {"
-                "background: rgba(255,255,255,0.0);"
-                "border: none;"
-                "border-radius: 10px;"
-                "color: #94a3b8;"
-                "font-size: 11px;"
-                "font-weight: 700;"
-                "padding: 4px 8px;"
-                "}"
-                "QPushButton:hover {"
-                "background: rgba(148,163,184,0.14);"
-                "color: #475569;"
-                "}"
-            )
+            button.setStyleSheet(toolbar_button_style)
             if action_key == "chat":
                 button.clicked.connect(self.toggle_chat_panel)
             else:
                 button.clicked.connect(lambda _checked=False, key=action_key: self.toolbar_action_requested.emit(key))
-            toolbar_layout.addWidget(button)
+            primary_toolbar_row.addWidget(button, 1)
             self._toolbar_buttons[action_key] = button
+        for action_key, label in (
+            ("dashboard", "可视化分析"),
+            ("report", "健康报告"),
+            ("exit", "退出"),
+        ):
+            button = QPushButton(label)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setMinimumHeight(24)
+            button.setStyleSheet(toolbar_button_style)
+            button.clicked.connect(lambda _checked=False, key=action_key: self.toolbar_action_requested.emit(key))
+            secondary_toolbar_row.addWidget(button, 1)
+            self._toolbar_buttons[action_key] = button
+        toolbar_layout.addLayout(primary_toolbar_row)
+        toolbar_layout.addLayout(secondary_toolbar_row)
         self.toolbar_frame.hide()
         layout.addWidget(self.toolbar_frame)
 
@@ -1230,6 +1259,8 @@ class EyeMuseWindow(QMainWindow):
         self._report_custom_mode = False
         self._latest_daily_report_md = ""
         self._latest_weekly_report_md = ""
+        self._latest_daily_report_html = ""
+        self._latest_weekly_report_html = ""
         self._streaming_reply_index: Optional[int] = None
         self._streaming_user_text: str = ""
         self._current_pet_mood = PetMood.idle
@@ -1893,6 +1924,11 @@ class EyeMuseWindow(QMainWindow):
         self.export_daily_report_button.setCursor(Qt.PointingHandCursor)
         self.export_daily_report_button.clicked.connect(lambda: self._export_report_markdown("daily"))
         daily_header.addWidget(self.export_daily_report_button)
+        self.export_daily_report_image_button = QPushButton("导出日报图片")
+        self.export_daily_report_image_button.setObjectName("GhostButton")
+        self.export_daily_report_image_button.setCursor(Qt.PointingHandCursor)
+        self.export_daily_report_image_button.clicked.connect(lambda: self._export_report_image("daily"))
+        daily_header.addWidget(self.export_daily_report_image_button)
         daily_stats_grid = QGridLayout()
         daily_stats_grid.setHorizontalSpacing(12)
         daily_stats_grid.setVerticalSpacing(12)
@@ -1903,7 +1939,11 @@ class EyeMuseWindow(QMainWindow):
         daily_stats_grid.addWidget(self.daily_rest_count_card, 0, 1)
         daily_stats_grid.addWidget(self.daily_focus_index_card, 0, 2)
         self.daily_report_view = QTextBrowser()
-        self.daily_report_view.setObjectName("OverviewPanel")
+        self.daily_report_view.setObjectName("ReportBrowser")
+        self.daily_report_view.setOpenExternalLinks(False)
+        self.daily_report_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.daily_report_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.daily_report_view.document().setDocumentMargin(0)
         daily_layout.addLayout(daily_header)
         daily_layout.addLayout(daily_stats_grid)
         daily_layout.addWidget(self.daily_report_view, 1)
@@ -1923,6 +1963,11 @@ class EyeMuseWindow(QMainWindow):
         self.export_weekly_report_button.setCursor(Qt.PointingHandCursor)
         self.export_weekly_report_button.clicked.connect(lambda: self._export_report_markdown("period"))
         weekly_header.addWidget(self.export_weekly_report_button)
+        self.export_weekly_report_image_button = QPushButton("导出当前图片")
+        self.export_weekly_report_image_button.setObjectName("GhostButton")
+        self.export_weekly_report_image_button.setCursor(Qt.PointingHandCursor)
+        self.export_weekly_report_image_button.clicked.connect(lambda: self._export_report_image("period"))
+        weekly_header.addWidget(self.export_weekly_report_image_button)
 
         custom_row = QHBoxLayout()
         custom_row.setSpacing(10)
@@ -1950,7 +1995,11 @@ class EyeMuseWindow(QMainWindow):
         custom_row.addStretch(1)
 
         self.weekly_report_view = QTextBrowser()
-        self.weekly_report_view.setObjectName("OverviewPanel")
+        self.weekly_report_view.setObjectName("ReportBrowser")
+        self.weekly_report_view.setOpenExternalLinks(False)
+        self.weekly_report_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.weekly_report_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.weekly_report_view.document().setDocumentMargin(0)
         weekly_layout.addLayout(weekly_header)
         weekly_layout.addLayout(custom_row)
         weekly_layout.addWidget(self.weekly_report_view, 1)
@@ -3300,6 +3349,471 @@ class EyeMuseWindow(QMainWindow):
             "3. **优先级三**：若高频切换周期持续增多，建议做任务分块和消息降噪；若键鼠活跃连续下降，建议主动安排短休息。\n"
         )
 
+    def _refresh_report_page(self) -> None:
+        self._sync_dashboard_repository()
+        today = QDate.currentDate().addDays(-1).toPython()
+        week_start = QDate.currentDate().addDays(-7).toPython()
+        week_end = QDate.currentDate().addDays(-1).toPython()
+
+        if self._dashboard_repository is not None:
+            daily_summary = self._dashboard_repository.get_report_summary(start_date=today, end_date=today)
+            if self._report_custom_mode:
+                custom_start, custom_end = self._report_custom_range
+                period_summary = self._dashboard_repository.get_report_summary(start_date=custom_start, end_date=custom_end)
+                period_title = "自定义时间健康分析报告"
+                period_mode = "自定义区间长期复盘"
+            else:
+                period_summary = self._dashboard_repository.get_report_summary(start_date=week_start, end_date=week_end)
+                period_title = "情绪健康周报"
+                period_mode = "周维度长期价值复盘"
+        else:
+            daily_summary = {}
+            period_summary = {}
+            period_title = "情绪健康周报"
+            period_mode = "周维度长期价值复盘"
+
+        if not hasattr(self, "weekly_report_title"):
+            return
+
+        self.weekly_report_title.setText(period_title)
+        self.report_custom_apply_button.setProperty("active", self._report_custom_mode)
+        self.report_custom_apply_button.style().unpolish(self.report_custom_apply_button)
+        self.report_custom_apply_button.style().polish(self.report_custom_apply_button)
+        self.daily_avg_stress_card.setValue(f"{daily_summary.get('average_stress', 0)}")
+        self.daily_rest_count_card.setValue(f"{daily_summary.get('rest_activity_count', 0)} 次")
+        self.daily_focus_index_card.setValue(f"{daily_summary.get('average_focus', 0)} / 100")
+
+        daily_title = "每日健康分析报告"
+        daily_range = f"{today.isoformat()} 至 {today.isoformat()}"
+        weekly_range = f"{period_summary.get('start_date', week_start.isoformat())} 至 {period_summary.get('end_date', week_end.isoformat())}"
+
+        self._latest_daily_report_md = self._build_health_report_markdown(
+            title=daily_title,
+            summary=daily_summary,
+            range_label=daily_range,
+            mode_label="日维度价值观察",
+        )
+        self._latest_weekly_report_md = self._build_health_report_markdown(
+            title=period_title,
+            summary=period_summary,
+            range_label=weekly_range,
+            mode_label=period_mode,
+        )
+        self._latest_daily_report_html = self._build_health_report_html(
+            title=daily_title,
+            summary=daily_summary,
+            range_label=daily_range,
+            mode_label="日维度价值观察",
+        )
+        self._latest_weekly_report_html = self._build_health_report_html(
+            title=period_title,
+            summary=period_summary,
+            range_label=weekly_range,
+            mode_label=period_mode,
+        )
+        self.daily_report_view.setHtml(self._latest_daily_report_html)
+        self.weekly_report_view.setHtml(self._latest_weekly_report_html)
+        self.daily_report_view.verticalScrollBar().setValue(0)
+        self.weekly_report_view.verticalScrollBar().setValue(0)
+        self._write_report_snapshot("daily_latest.md", self._latest_daily_report_md)
+        self._write_report_snapshot("daily_latest.html", self._latest_daily_report_html)
+        period_file = "custom_latest" if self._report_custom_mode else "weekly_latest"
+        self._write_report_snapshot(f"{period_file}.md", self._latest_weekly_report_md)
+        self._write_report_snapshot(f"{period_file}.html", self._latest_weekly_report_html)
+
+    def _report_export_bundle(self, report_type: str) -> tuple[str, str, str, QTextBrowser]:
+        if report_type == "daily":
+            return (
+                self._latest_daily_report_md,
+                self._latest_daily_report_html,
+                "eyemuse_daily_report",
+                self.daily_report_view,
+            )
+        return (
+            self._latest_weekly_report_md,
+            self._latest_weekly_report_html,
+            "eyemuse_period_report",
+            self.weekly_report_view,
+        )
+
+    def _export_report_markdown(self, report_type: str) -> None:
+        content_md, _content_html, default_stem, _browser = self._report_export_bundle(report_type)
+        if not content_md:
+            self.statusBar().showMessage("当前没有可导出的报告内容", 3200)
+            return
+        default_path = str(self._report_storage_dir() / f"{default_stem}.md")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出 Markdown 报告",
+            default_path,
+            "Markdown Files (*.md)",
+        )
+        if not file_path:
+            return
+        Path(file_path).write_text(content_md, encoding="utf-8")
+        self.statusBar().showMessage(f"报告已导出到 {file_path}", 3200)
+
+    def _export_report_image(self, report_type: str) -> None:
+        _content_md, content_html, default_stem, browser = self._report_export_bundle(report_type)
+        if not content_html:
+            self.statusBar().showMessage("当前没有可导出的报告图片内容", 3200)
+            return
+        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd_HHmmss_zzz")
+        export_dir = self._report_storage_dir()
+        default_path = export_dir / f"{default_stem}_{timestamp}.png"
+        duplicate_index = 2
+        while default_path.exists():
+            default_path = export_dir / f"{default_stem}_{timestamp}_{duplicate_index}.png"
+            duplicate_index += 1
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出报告图片",
+            str(default_path),
+            "PNG Files (*.png)",
+        )
+        if not file_path:
+            return
+        image = self._render_report_browser_to_image(browser)
+        image.save(file_path, "PNG")
+        self.statusBar().showMessage(f"报告图片已导出到 {file_path}", 3200)
+
+    def _render_report_browser_to_image(self, browser: QTextBrowser) -> QImage:
+        document = browser.document().clone(self)
+        document.setTextWidth(max(760, browser.viewport().width() - 24))
+        doc_size = document.documentLayout().documentSize().toSize()
+        margin = 26
+        image = QImage(
+            max(1, doc_size.width() + margin * 2),
+            max(1, doc_size.height() + margin * 2),
+            QImage.Format_ARGB32_Premultiplied,
+        )
+        image.fill(QColor("#07111f"))
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.translate(margin, margin)
+        document.drawContents(painter, QRectF(0, 0, doc_size.width(), doc_size.height()))
+        painter.end()
+        return image
+
+    def _report_insights(self, summary: dict) -> dict[str, object]:
+        sample_count = int(summary.get("sample_count", 0) or 0)
+        avg_stress = float(summary.get("average_stress", 0) or 0)
+        avg_fatigue = float(summary.get("average_fatigue", 0) or 0)
+        avg_focus = float(summary.get("average_focus", 0) or 0)
+        top_emotion = str(summary.get("top_emotion", "平稳") or "平稳")
+        top_signal = str(summary.get("top_signal", "稳定") or "稳定")
+        top_behavior = _format_behavior_state(str(summary.get("top_behavior_state", "warming") or "warming"))
+
+        raw_best_state = str(summary.get("best_state", "平稳 / warming") or "平稳 / warming")
+        if " / " in raw_best_state:
+            state_emotion, state_behavior = raw_best_state.split(" / ", 1)
+            best_state_label = f"{state_emotion} / {_format_behavior_state(state_behavior)}"
+        else:
+            best_state_label = raw_best_state
+
+        best_hour_label = str(summary.get("best_hour_label", "暂无数据") or "暂无数据")
+        best_hour_score = float(summary.get("best_hour_score", 0) or 0)
+        best_state_score = float(summary.get("best_state_score", 0) or 0)
+        trend_summary = str(summary.get("trend_summary", "整体趋势仍在积累中。") or "整体趋势仍在积累中。")
+        focus_delta = float(summary.get("focus_delta", 0) or 0)
+        stress_delta = float(summary.get("stress_delta", 0) or 0)
+        fatigue_delta = float(summary.get("fatigue_delta", 0) or 0)
+        highlight_moments = list(summary.get("highlight_moments", []) or [])
+        support_message = str(summary.get("support_message", "") or "")
+        needs_support = bool(summary.get("needs_support", False))
+
+        if avg_fatigue >= 75 or avg_stress >= 72:
+            risk_level = "高"
+            recommendation = "优先减轻持续高压任务，安排离屏休息，并降低接下来 24 小时的任务密度。"
+        elif avg_focus >= 72 and avg_stress <= 60:
+            risk_level = "低"
+            recommendation = "当前状态适合持续打磨长期项目，把重要输出压到高质量时段完成。"
+        else:
+            risk_level = "中"
+            recommendation = "建议把任务拆成更清晰的阶段，在状态回落前主动切换到整理、复盘或沟通型任务。"
+
+        if best_hour_label != "暂无数据":
+            efficiency_recommendation = f"数据显示你 {best_hour_label} 效率最高，建议把重要任务安排在这个时段。"
+        else:
+            efficiency_recommendation = "当前样本仍较少，建议继续积累数据后再锁定个人高效时段。"
+
+        long_term_value = (
+            f"长期来看，你最有价值的不是单次冲刺，而是把 {best_hour_label if best_hour_label != '暂无数据' else '高质量状态'} "
+            "稳定转化为可重复的工作节奏。"
+        )
+        metric_rows = [
+            ("平均压力", f"{summary.get('average_stress', 0)}", "值越低越利于深度工作"),
+            ("平均疲劳", f"{summary.get('average_fatigue', 0)}", "值越高越需要恢复与节奏调整"),
+            ("平均专注", f"{summary.get('average_focus', 0)}", "值越高越适合安排关键产出"),
+            ("键盘活跃", f"{summary.get('average_keyboard_activity', 0)}", "辅助判断输入密度与执行节奏"),
+            ("鼠标活跃", f"{summary.get('average_mouse_activity', 0)}", "辅助判断操作负荷与切换频率"),
+            ("平均 key-rate", f"{summary.get('average_key_rate_per_min', 0)}", "每分钟输入活跃度"),
+        ]
+        support_resources = [
+            "学校心理中心 / 企业 EAP / 社区心理咨询资源",
+            "可信任的家人、朋友或主管，先进行一次低压力沟通",
+            "若持续影响睡眠、食欲或日常功能，考虑联系专业心理咨询或精神卫生门诊",
+        ] if needs_support else []
+
+        if not highlight_moments:
+            highlight_moments = ["本周期暂未识别到低疲劳持续工作时段，建议继续积累数据后再观察。"]
+
+        return {
+            "sample_count": sample_count,
+            "risk_level": risk_level,
+            "recommendation": recommendation,
+            "efficiency_recommendation": efficiency_recommendation,
+            "best_hour_label": best_hour_label,
+            "best_hour_score": best_hour_score,
+            "best_state_label": best_state_label,
+            "best_state_score": best_state_score,
+            "top_emotion": top_emotion,
+            "top_signal": top_signal,
+            "top_behavior": top_behavior,
+            "trend_summary": trend_summary,
+            "focus_delta": focus_delta,
+            "stress_delta": stress_delta,
+            "fatigue_delta": fatigue_delta,
+            "highlight_moments": highlight_moments,
+            "support_message": support_message,
+            "support_resources": support_resources,
+            "long_term_value": long_term_value,
+            "metric_rows": metric_rows,
+            "high_stress_count": int(summary.get("high_stress_count", 0) or 0),
+            "high_fatigue_count": int(summary.get("high_fatigue_count", 0) or 0),
+            "high_switch_count": int(summary.get("high_switch_count", 0) or 0),
+            "keyboard_decline_count": int(summary.get("keyboard_decline_count", 0) or 0),
+            "mouse_decline_count": int(summary.get("mouse_decline_count", 0) or 0),
+        }
+
+    def _build_health_report_markdown(self, *, title: str, summary: dict, range_label: str, mode_label: str) -> str:
+        insights = self._report_insights(summary)
+        metric_lines = "\n".join(
+            f"| {label} | {value} | {hint} |" for label, value, hint in insights["metric_rows"]
+        )
+        highlight_lines = "\n".join(f"- {item}" for item in insights["highlight_moments"])
+        support_block = ""
+        if insights["support_message"]:
+            resource_lines = "\n".join(f"- {item}" for item in insights["support_resources"])
+            support_block = (
+                "## 温和支持提醒\n"
+                f"- {insights['support_message']}\n"
+                f"{resource_lines}\n\n"
+            )
+
+        return (
+            f"# {title}\n\n"
+            f"> 统计区间：{range_label}  \n"
+            f"> 分析模式：{mode_label}\n\n"
+            "## 长期价值视角\n"
+            f"- {insights['long_term_value']}\n"
+            f"- 当前主导情绪为 **{insights['top_emotion']}**，主要信号为 **{insights['top_signal']}**，行为画像为 **{insights['top_behavior']}**。\n"
+            f"- 当前风险等级：**{insights['risk_level']}**，共分析 **{insights['sample_count']}** 条样本。\n\n"
+            "## 情绪与效率关联分析\n"
+            f"- 效率最高时间段：**{insights['best_hour_label']}**，综合效率评分 **{insights['best_hour_score']}**。\n"
+            f"- 最佳状态组合：**{insights['best_state_label']}**，综合效率评分 **{insights['best_state_score']}**。\n"
+            f"- 建议：{insights['efficiency_recommendation']}\n\n"
+            "## 情绪健康周报\n"
+            f"- 趋势：{insights['trend_summary']}\n"
+            f"- 低疲劳持续工作时段：\n{highlight_lines}\n"
+            f"- 总体建议：{insights['recommendation']}\n\n"
+            "## 核心指标\n"
+            "| 指标 | 数值 | 解读 |\n"
+            "| --- | ---: | --- |\n"
+            f"{metric_lines}\n\n"
+            "## 风险观察\n"
+            f"- 高压力样本次数：**{insights['high_stress_count']}**\n"
+            f"- 高疲劳样本次数：**{insights['high_fatigue_count']}**\n"
+            f"- 高频切换周期次数：**{insights['high_switch_count']}**\n"
+            f"- 键盘活跃下降次数：**{insights['keyboard_decline_count']}**\n"
+            f"- 鼠标活跃下降次数：**{insights['mouse_decline_count']}**\n\n"
+            f"{support_block}"
+        )
+
+    def _build_health_report_html(self, *, title: str, summary: dict, range_label: str, mode_label: str) -> str:
+        insights = self._report_insights(summary)
+        risk_level = str(insights["risk_level"])
+        risk_color = {"低": "#58d6a9", "中": "#f0b45d", "高": "#ff7b7b"}.get(risk_level, "#f0b45d")
+        metrics_html = "".join(
+            "<tr>"
+            f"<td width='26%' class='metric-label'>{escape(label)}</td>"
+            f"<td width='18%' class='metric-value'>{escape(value)}</td>"
+            f"<td width='56%' class='metric-hint'>{escape(hint)}</td>"
+            "</tr>"
+            for label, value, hint in insights["metric_rows"]
+        )
+        highlights_html = "".join(
+            "<tr>"
+            f"<td width='38' valign='top' class='moment-index'>0{index}</td>"
+            f"<td valign='top' class='moment-text'>{escape(str(item))}</td>"
+            "</tr>"
+            for index, item in enumerate(insights["highlight_moments"], start=1)
+        )
+        resources_html = "".join(
+            f"<tr><td width='18' valign='top' class='resource-dot'>•</td><td class='resource-text'>{escape(item)}</td></tr>"
+            for item in insights["support_resources"]
+        )
+        support_html = ""
+        if insights["support_message"]:
+            support_html = (
+                "<tr><td height='14'></td></tr>"
+                "<tr><td>"
+                "<table width='100%' cellspacing='0' cellpadding='18' class='support-card'>"
+                "<tr><td>"
+                "<div class='support-tag'>温和支持</div>"
+                "<h2>长期异常值得被认真照顾</h2>"
+                f"<p>{escape(str(insights['support_message']))}</p>"
+                f"<table width='100%' cellspacing='0' cellpadding='3'>{resources_html}</table>"
+                "</td></tr></table>"
+                "</td></tr>"
+            )
+
+        return f"""
+        <html>
+        <head>
+        <style>
+            body {{ margin: 0; background-color: #07111f; color: #dce7f5; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; }}
+            table {{ color: #dce7f5; }}
+            h1 {{ color: #f7fbff; font-size: 28px; font-weight: 700; margin: 8px 0 6px; }}
+            h2 {{ color: #f7fbff; font-size: 18px; font-weight: 700; margin: 4px 0 8px; }}
+            p {{ color: #afbdd0; font-size: 13px; line-height: 1.65; margin: 6px 0; }}
+            .canvas {{ background-color: #07111f; }}
+            .hero {{ background-color: #102942; border: 1px solid #2a516b; }}
+            .eyebrow {{ color: #65d9c6; font-size: 11px; font-weight: 700; }}
+            .range {{ color: #91a6bb; font-size: 12px; }}
+            .hero-summary {{ color: #dce7f5; font-size: 14px; line-height: 1.6; }}
+            .stat-card {{ background-color: #0c2035; border: 1px solid #24455f; }}
+            .stat-label {{ color: #8298ad; font-size: 11px; }}
+            .stat-value {{ color: #f7fbff; font-size: 20px; font-weight: 700; }}
+            .stat-note {{ color: #9fb0c3; font-size: 11px; }}
+            .section-card {{ background-color: #0b192a; border: 1px solid #1d3650; }}
+            .section-tag {{ color: #65d9c6; font-size: 11px; font-weight: 700; }}
+            .lead {{ color: #dce7f5; font-size: 14px; line-height: 1.7; }}
+            .accent-card {{ background-color: #10243a; border-left: 3px solid #65d9c6; }}
+            .accent-label {{ color: #8298ad; font-size: 11px; }}
+            .accent-value {{ color: #f7fbff; font-size: 22px; font-weight: 700; }}
+            .accent-copy {{ color: #afbdd0; font-size: 12px; line-height: 1.55; }}
+            .trend-cell {{ background-color: #0d2034; border: 1px solid #1e3d58; }}
+            .trend-value {{ color: #f0b45d; font-size: 16px; font-weight: 700; }}
+            .trend-label {{ color: #8fa3b7; font-size: 10px; }}
+            .moment-index {{ color: #65d9c6; font-size: 11px; font-weight: 700; padding: 7px 5px; }}
+            .moment-text {{ color: #dce7f5; font-size: 12px; line-height: 1.55; padding: 7px 8px; border-bottom: 1px solid #1d3650; }}
+            .metric-label {{ color: #a8b7c9; font-size: 12px; padding: 9px 10px; border-bottom: 1px solid #1d3650; }}
+            .metric-value {{ color: #f7fbff; font-size: 13px; font-weight: 700; padding: 9px 10px; border-bottom: 1px solid #1d3650; }}
+            .metric-hint {{ color: #71879d; font-size: 11px; padding: 9px 10px; border-bottom: 1px solid #1d3650; }}
+            .support-card {{ background-color: #2a2117; border: 1px solid #70522d; }}
+            .support-tag {{ color: #f0b45d; font-size: 11px; font-weight: 700; }}
+            .resource-dot {{ color: #f0b45d; font-size: 13px; }}
+            .resource-text {{ color: #d8c8b4; font-size: 12px; line-height: 1.5; }}
+        </style>
+        </head>
+        <body>
+            <table width="96%" align="center" cellspacing="0" cellpadding="0" class="canvas">
+            <tr><td>
+                <table width="100%" cellspacing="0" cellpadding="20" class="hero">
+                <tr><td>
+                    <div class="eyebrow">{escape(mode_label)}</div>
+                    <h1>{escape(title)}</h1>
+                    <div class="range">统计区间 · {escape(range_label)}</div>
+                    <p class="hero-summary">{escape(str(insights["long_term_value"]))}</p>
+                    <table width="100%" cellspacing="8" cellpadding="12">
+                    <tr>
+                        <td width="34%" valign="top" class="stat-card">
+                            <div class="stat-label">效率高峰</div>
+                            <div class="stat-value">{escape(str(insights["best_hour_label"]))}</div>
+                            <div class="stat-note">综合评分 {escape(str(insights["best_hour_score"]))}</div>
+                        </td>
+                        <td width="33%" valign="top" class="stat-card">
+                            <div class="stat-label">平均专注</div>
+                            <div class="stat-value">{escape(str(summary.get("average_focus", 0)))}</div>
+                            <div class="stat-note">主导情绪 · {escape(str(insights["top_emotion"]))}</div>
+                        </td>
+                        <td width="33%" valign="top" class="stat-card">
+                            <div class="stat-label">风险等级</div>
+                            <div class="stat-value" style="color:{risk_color};">{escape(risk_level)}</div>
+                            <div class="stat-note">{escape(str(insights["sample_count"]))} 条有效样本</div>
+                        </td>
+                    </tr>
+                    </table>
+                </td></tr>
+                </table>
+            </td></tr>
+            <tr><td height="14"></td></tr>
+            <tr><td>
+                <table width="100%" cellspacing="0" cellpadding="18" class="section-card">
+                <tr><td>
+                    <div class="section-tag">LONG-TERM VALUE · 长期价值</div>
+                    <h2>把好状态变成可重复的节奏</h2>
+                    <p class="lead">{escape(str(insights["recommendation"]))}</p>
+                    <p>当前行为画像为 {escape(str(insights["top_behavior"]))}，主要信号为 {escape(str(insights["top_signal"]))}。长期追踪的意义，是让高质量输出不再依赖偶然状态。</p>
+                </td></tr>
+                </table>
+            </td></tr>
+            <tr><td height="14"></td></tr>
+            <tr><td>
+                <table width="100%" cellspacing="0" cellpadding="18" class="section-card">
+                <tr><td>
+                    <div class="section-tag">EMOTION × EFFICIENCY · 情绪与效率</div>
+                    <h2>最值得保护的工作窗口</h2>
+                    <table width="100%" cellspacing="8" cellpadding="14">
+                    <tr>
+                        <td width="50%" valign="top" class="accent-card">
+                            <div class="accent-label">高效时间段</div>
+                            <div class="accent-value">{escape(str(insights["best_hour_label"]))}</div>
+                            <p class="accent-copy">{escape(str(insights["efficiency_recommendation"]))}</p>
+                        </td>
+                        <td width="50%" valign="top" class="accent-card" style="border-left-color:#f0b45d;">
+                            <div class="accent-label">最佳状态组合</div>
+                            <div class="accent-value">{escape(str(insights["best_state_label"]))}</div>
+                            <p class="accent-copy">综合效率评分 {escape(str(insights["best_state_score"]))}，适合安排深度工作与关键输出。</p>
+                        </td>
+                    </tr>
+                    </table>
+                </td></tr>
+                </table>
+            </td></tr>
+            <tr><td height="14"></td></tr>
+            <tr><td>
+                <table width="100%" cellspacing="0" cellpadding="18" class="section-card">
+                <tr>
+                    <td width="48%" valign="top">
+                        <div class="section-tag">WEEKLY TREND · 周期趋势</div>
+                        <h2>状态变化</h2>
+                        <p>{escape(str(insights["trend_summary"]))}</p>
+                        <table width="100%" cellspacing="6" cellpadding="10">
+                        <tr>
+                            <td width="33%" class="trend-cell"><div class="trend-value">{escape(str(insights["focus_delta"]))}</div><div class="trend-label">专注变化</div></td>
+                            <td width="33%" class="trend-cell"><div class="trend-value">{escape(str(insights["stress_delta"]))}</div><div class="trend-label">压力变化</div></td>
+                            <td width="34%" class="trend-cell"><div class="trend-value">{escape(str(insights["fatigue_delta"]))}</div><div class="trend-label">疲劳变化</div></td>
+                        </tr>
+                        </table>
+                    </td>
+                    <td width="4%"></td>
+                    <td width="48%" valign="top">
+                        <div class="section-tag">HIGHLIGHTS · 高光时刻</div>
+                        <h2>低疲劳持续工作时段</h2>
+                        <table width="100%" cellspacing="0" cellpadding="0">{highlights_html}</table>
+                    </td>
+                </tr>
+                </table>
+            </td></tr>
+            <tr><td height="14"></td></tr>
+            <tr><td>
+                <table width="100%" cellspacing="0" cellpadding="18" class="section-card">
+                <tr><td>
+                    <div class="section-tag">HEALTH SIGNALS · 核心指标</div>
+                    <h2>指标明细</h2>
+                    <table width="100%" cellspacing="0" cellpadding="0">{metrics_html}</table>
+                </td></tr>
+                </table>
+            </td></tr>
+            {support_html}
+            </table>
+        </body>
+        </html>
+        """
+
     def _apply_theme(self) -> None:
         self.setFont(QFont("Segoe UI Variable", 10))
         app = QApplication.instance()
@@ -3451,6 +3965,39 @@ class EyeMuseWindow(QMainWindow):
                 padding: 12px;
                 color: #e2e8f0;
                 font-size: 14px;
+            }
+            #ReportBrowser {
+                background: #07111f;
+                border: 1px solid rgba(73, 108, 138, 130);
+                border-radius: 18px;
+                padding: 0;
+                color: #dce7f5;
+                font-size: 14px;
+                selection-background-color: #2f766f;
+            }
+            #ReportBrowser QScrollBar:vertical {
+                background: #07111f;
+                width: 12px;
+                margin: 5px 2px 5px 2px;
+                border: none;
+            }
+            #ReportBrowser QScrollBar::handle:vertical {
+                background: #2b6074;
+                min-height: 52px;
+                border-radius: 5px;
+            }
+            #ReportBrowser QScrollBar::handle:vertical:hover {
+                background: #4ab8ac;
+            }
+            #ReportBrowser QScrollBar::add-line:vertical,
+            #ReportBrowser QScrollBar::sub-line:vertical {
+                height: 0;
+                border: none;
+                background: transparent;
+            }
+            #ReportBrowser QScrollBar::add-page:vertical,
+            #ReportBrowser QScrollBar::sub-page:vertical {
+                background: transparent;
             }
             #CameraPreview {
                 background: rgba(2, 6, 23, 190);
@@ -3887,9 +4434,9 @@ class EyeMuseWindow(QMainWindow):
             self._companion_window.set_chat_busy(self._llm_thread is not None)
 
     def _handle_companion_toolbar_action(self, action: str) -> None:
-        if action == "home":
+        if action in {"home", "dashboard", "report"}:
             self._restore_from_companion_mode()
-            self._switch_page("home")
+            self._switch_page(action)
             return
         if action == "camera":
             self._toggle_camera_from_companion()

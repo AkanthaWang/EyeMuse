@@ -502,7 +502,7 @@ class DashboardRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT emotion, stress_score, fatigue_score, focus_score, dominant_signal, event_text,
+                SELECT recorded_at, emotion, stress_score, fatigue_score, focus_score, dominant_signal, event_text,
                        key_rate_per_min, keyboard_activity, keyboard_declined,
                        mouse_distance, mouse_activity, mouse_declined,
                        modality_switches, behavior_state
@@ -545,6 +545,142 @@ class DashboardRepository:
         )
         events = [row["event_text"] for row in rows[-5:] if row["event_text"]]
 
+        def _avg_list(values: list[float]) -> float:
+            if not values:
+                return 0.0
+            return round(sum(values) / len(values), 1)
+
+        def _efficiency_score(row: sqlite3.Row) -> float:
+            return round(
+                max(
+                    0.0,
+                    min(
+                        100.0,
+                        row["focus_score"] * 0.58
+                        + row["keyboard_activity"] * 16.0
+                        + row["mouse_activity"] * 12.0
+                        - row["stress_score"] * 0.18
+                        - row["fatigue_score"] * 0.14,
+                    ),
+                ),
+                1,
+            )
+
+        hourly_scores: dict[int, list[float]] = {}
+        state_scores: dict[str, list[float]] = {}
+        low_fatigue_work_samples: list[tuple[datetime, float, float]] = []
+        focus_series: list[float] = []
+        stress_series: list[float] = []
+        fatigue_series: list[float] = []
+
+        for row in rows:
+            score = _efficiency_score(row)
+            try:
+                recorded_at = datetime.fromisoformat(str(row["recorded_at"]))
+                hourly_scores.setdefault(recorded_at.hour, []).append(score)
+                is_low_fatigue = row["fatigue_score"] <= 45
+                is_working = (
+                    row["focus_score"] >= 50
+                    and (
+                        row["keyboard_activity"] >= 0.08
+                        or row["mouse_activity"] >= 0.08
+                        or row["behavior_state"] == "focused"
+                    )
+                )
+                if is_low_fatigue and is_working:
+                    low_fatigue_work_samples.append(
+                        (recorded_at, float(row["fatigue_score"]), float(row["focus_score"]))
+                    )
+            except ValueError:
+                pass
+
+            state_label = f"{row['emotion']} / {row['behavior_state']}"
+            state_scores.setdefault(state_label, []).append(score)
+
+            focus_series.append(float(row["focus_score"]))
+            stress_series.append(float(row["stress_score"]))
+            fatigue_series.append(float(row["fatigue_score"]))
+
+        best_hour = None
+        best_hour_label = "暂无数据"
+        best_hour_score = 0.0
+        if hourly_scores:
+            best_hour, values = max(hourly_scores.items(), key=lambda item: _avg_list(item[1]))
+            best_hour_label = f"{best_hour:02d}:00-{(best_hour + 2) % 24:02d}:00"
+            best_hour_score = _avg_list(values)
+
+        best_state = "平稳 / warming"
+        best_state_score = 0.0
+        if state_scores:
+            best_state, values = max(state_scores.items(), key=lambda item: _avg_list(item[1]))
+            best_state_score = _avg_list(values)
+
+        low_fatigue_periods: list[list[tuple[datetime, float, float]]] = []
+        for sample in low_fatigue_work_samples:
+            if not low_fatigue_periods or sample[0] - low_fatigue_periods[-1][-1][0] > timedelta(minutes=5):
+                low_fatigue_periods.append([sample])
+            else:
+                low_fatigue_periods[-1].append(sample)
+
+        period_stats: list[tuple[float, float, str]] = []
+        for period_rows in low_fatigue_periods:
+            if len(period_rows) < 2:
+                continue
+            period_start = period_rows[0][0]
+            period_end = period_rows[-1][0]
+            duration_minutes = max(1.0, (period_end - period_start).total_seconds() / 60.0 + 1.0)
+            average_period_fatigue = _avg_list([sample[1] for sample in period_rows])
+            average_period_focus = _avg_list([sample[2] for sample in period_rows])
+            if period_start.date() == period_end.date():
+                time_range = (
+                    f"{period_start.strftime('%m-%d %H:%M')}-"
+                    f"{period_end.strftime('%H:%M')}"
+                )
+            else:
+                time_range = (
+                    f"{period_start.strftime('%m-%d %H:%M')}-"
+                    f"{period_end.strftime('%m-%d %H:%M')}"
+                )
+            period_text = (
+                f"{time_range} · 低疲劳持续工作 {round(duration_minutes)} 分钟，"
+                f"平均疲劳度 {average_period_fatigue}，平均专注度 {average_period_focus}"
+            )
+            period_stats.append((duration_minutes, average_period_fatigue, period_text))
+
+        highlight_moments = [
+            text
+            for _duration, _fatigue, text in sorted(
+                period_stats,
+                key=lambda item: (-item[0], item[1]),
+            )[:3]
+        ]
+
+        split_index = len(rows) // 2
+        early_focus = _avg_list(focus_series[:split_index])
+        late_focus = _avg_list(focus_series[split_index:])
+        early_stress = _avg_list(stress_series[:split_index])
+        late_stress = _avg_list(stress_series[split_index:])
+        early_fatigue = _avg_list(fatigue_series[:split_index])
+        late_fatigue = _avg_list(fatigue_series[split_index:])
+        focus_delta = round(late_focus - early_focus, 1)
+        stress_delta = round(late_stress - early_stress, 1)
+        fatigue_delta = round(late_fatigue - early_fatigue, 1)
+
+        if focus_delta >= 5 and stress_delta <= 0:
+            trend_summary = "本周期后半段专注度明显提升，说明节奏逐步进入稳定区。"
+        elif focus_delta <= -5 or fatigue_delta >= 5:
+            trend_summary = "本周期后半段出现效率回落，建议检查任务密度和恢复节奏。"
+        else:
+            trend_summary = "整体波动可控，效率与情绪状态保持在相对稳定区间。"
+
+        anomaly_ratio = 0.0 if not rows else round(max(high_stress_count, high_fatigue_count) / len(rows), 3)
+        needs_support = len(rows) >= 12 and _avg("fatigue_score") >= 72 and anomaly_ratio >= 0.3
+        support_message = (
+            "如果这种高疲劳或高压力状态已经持续数周，建议和可信任的人聊聊，或联系学校/企业 EAP、心理咨询与精神卫生资源。"
+            if needs_support
+            else ""
+        )
+
         return {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
@@ -569,4 +705,16 @@ class DashboardRepository:
             "high_switch_count": high_switch_count,
             "rest_activity_count": rest_activity_count,
             "events": events,
+            "best_hour": best_hour,
+            "best_hour_label": best_hour_label,
+            "best_hour_score": best_hour_score,
+            "best_state": best_state,
+            "best_state_score": best_state_score,
+            "trend_summary": trend_summary,
+            "focus_delta": focus_delta,
+            "stress_delta": stress_delta,
+            "fatigue_delta": fatigue_delta,
+            "highlight_moments": highlight_moments,
+            "needs_support": needs_support,
+            "support_message": support_message,
         }
