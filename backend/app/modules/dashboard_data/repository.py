@@ -89,12 +89,31 @@ class DashboardRepository:
                 """
             )
             self._ensure_metric_snapshot_columns(cursor)
-            demo_count = cursor.execute(
-                "SELECT COUNT(*) AS count FROM metric_snapshots WHERE source = 'demo'"
-            ).fetchone()["count"]
-            if demo_count < 240:
+            demo_stats = cursor.execute(
+                """
+                SELECT COUNT(*) AS count, MAX(recorded_at) AS latest_at
+                FROM metric_snapshots
+                WHERE source = 'demo'
+                """
+            ).fetchone()
+            expected_demo_count = 46 * 8
+            expected_latest_at = (
+                datetime.now() - timedelta(days=1)
+            ).replace(hour=21, minute=0, second=0, microsecond=0)
+            latest_demo_at = (
+                datetime.fromisoformat(demo_stats["latest_at"])
+                if demo_stats["latest_at"]
+                else None
+            )
+            demo_data_is_stale = (
+                demo_stats["count"] < expected_demo_count
+                or latest_demo_at is None
+                or latest_demo_at < expected_latest_at
+            )
+            if demo_data_is_stale:
                 cursor.execute("DELETE FROM metric_snapshots WHERE source = 'demo'")
                 self._seed_demo_data(connection)
+            self._ensure_demo_rest_events(cursor)
 
     @staticmethod
     def _ensure_metric_snapshot_columns(cursor: sqlite3.Cursor) -> None:
@@ -118,13 +137,30 @@ class DashboardRepository:
             if column_name not in existing_columns:
                 cursor.execute(f"ALTER TABLE metric_snapshots ADD COLUMN {column_name} {definition}")
 
+    @staticmethod
+    def _ensure_demo_rest_events(cursor: sqlite3.Cursor) -> None:
+        cursor.execute(
+            """
+            UPDATE metric_snapshots
+            SET event_text = CASE strftime('%H', recorded_at)
+                WHEN '12' THEN 'Demo：完成 10 分钟离屏休息，状态恢复稳定'
+                WHEN '18' THEN 'Demo：完成 3 轮呼吸放松，压力有所缓解'
+                ELSE event_text
+            END
+            WHERE source = 'demo'
+              AND strftime('%H', recorded_at) IN ('12', '18')
+              AND event_text NOT LIKE '%离屏休息%'
+              AND event_text NOT LIKE '%呼吸放松%'
+            """
+        )
+
     def _seed_demo_data(self, connection: sqlite3.Connection) -> None:
         rng = random.Random(42)
         now = datetime.now().replace(second=0, microsecond=0)
-        start = (now - timedelta(days=45)).replace(hour=0, minute=0)
+        start = (now - timedelta(days=46)).replace(hour=0, minute=0)
         rows: list[tuple[Any, ...]] = []
 
-        sample_count = 45 * 8
+        sample_count = 46 * 8
         for index in range(sample_count):
             current = start + timedelta(hours=3 * index)
             day_phase = index / 8.0
@@ -182,6 +218,11 @@ class DashboardRepository:
                 keyboard_declined = 0
                 mouse_declined = 0
                 behavior_state = "warming"
+
+            if current.hour == 12:
+                event_text = "Demo：完成 10 分钟离屏休息，状态恢复稳定"
+            elif current.hour == 18:
+                event_text = "Demo：完成 3 轮呼吸放松，压力有所缓解"
 
             rows.append(
                 (
