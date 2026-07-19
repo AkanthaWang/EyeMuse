@@ -1172,6 +1172,7 @@ class EyeMuseWindow(QMainWindow):
         self._companion_window: Optional[CompanionPetWindow] = None
 
         self._build_ui()
+        self._update_companion_controls()
         self._start_activity_monitor()
         self._apply_theme()
         self._refresh_dashboard_page()
@@ -1467,9 +1468,13 @@ class EyeMuseWindow(QMainWindow):
         self.minimize_companion_button.setObjectName("CompanionModeButton")
         self.minimize_companion_button.setCursor(Qt.PointingHandCursor)
         self.minimize_companion_button.clicked.connect(self._enter_companion_mode)
+        self.keep_companion_checkbox = QCheckBox("显示桌宠")
+        self.keep_companion_checkbox.setChecked(False)
+        self.keep_companion_checkbox.stateChanged.connect(self._handle_companion_presence_toggle)
         status_row.addWidget(self.mood_badge)
         status_row.addWidget(self.privacy_badge)
         status_row.addWidget(self.minimize_companion_button)
+        status_row.addWidget(self.keep_companion_checkbox)
         status_row.addStretch(1)
 
         self.pet_hint = QLabel("等待用户输入，或开启摄像头观察状态变化。")
@@ -1826,6 +1831,8 @@ class EyeMuseWindow(QMainWindow):
             self._refresh_dashboard_page()
         elif page == "report":
             self._refresh_report_page()
+
+        self._update_companion_controls()
 
         if show_status:
             page_name = {"home": "主页面", "dashboard": "可视化分析大屏", "report": "健康报告页面"}.get(page, "主页面")
@@ -3732,6 +3739,28 @@ class EyeMuseWindow(QMainWindow):
             if self._companion_window is not None:
                 self._companion_window.toggle_chat_panel()
 
+    def _should_show_companion(self) -> bool:
+        return hasattr(self, "keep_companion_checkbox") and self.keep_companion_checkbox.isChecked()
+
+    def _handle_companion_presence_toggle(self, state: int) -> None:
+        show_companion = Qt.CheckState(state) == Qt.CheckState.Checked
+        if show_companion:
+            companion_window = self._ensure_companion_window()
+            self._place_companion_window()
+            companion_window.show()
+            companion_window.raise_()
+        elif self._companion_window is not None and self._companion_window.isVisible():
+            self._companion_window.hide()
+        self._update_companion_controls()
+        message = "桌宠已显示" if show_companion else "桌宠已关闭"
+        self.statusBar().showMessage(message, 2500)
+
+    def _update_companion_controls(self) -> None:
+        if not hasattr(self, "minimize_companion_button"):
+            return
+        show_companion = self._should_show_companion()
+        self.minimize_companion_button.setText("最小化并保留桌宠" if show_companion else "普通最小化")
+
     def _ensure_companion_window(self) -> CompanionPetWindow:
         if self._companion_window is None:
             self._companion_window = CompanionPetWindow()
@@ -3759,18 +3788,33 @@ class EyeMuseWindow(QMainWindow):
 
     def _enter_default_companion_mode(self) -> None:
         self._start_camera()
-        self._enter_companion_mode()
+        if self._should_show_companion():
+            companion_window = self._ensure_companion_window()
+            self._place_companion_window()
+            companion_window.show()
+            companion_window.raise_()
+        self._update_companion_controls()
 
     def _enter_companion_mode(self) -> None:
+        if not self._should_show_companion():
+            if self._companion_window is not None:
+                self._companion_window.hide()
+            self._update_companion_controls()
+            self.showMinimized()
+            self.statusBar().showMessage("已普通最小化，桌宠不会保留", 2500)
+            return
+
         companion_window = self._ensure_companion_window()
         self._place_companion_window()
         companion_window.show()
         companion_window.raise_()
+        self._update_companion_controls()
         self.hide()
 
     def _restore_from_companion_mode(self) -> None:
-        if self._companion_window is not None:
+        if self._companion_window is not None and not self._should_show_companion():
             self._companion_window.hide()
+        self._update_companion_controls()
         self.showNormal()
         self.raise_()
         self.activateWindow()
