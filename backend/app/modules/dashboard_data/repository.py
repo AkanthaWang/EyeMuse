@@ -22,6 +22,16 @@ class RealtimeSnapshot:
     dominant_signal: str
     event_text: str
     camera_enabled: bool
+    key_rate_per_min: float = 0.0
+    keyboard_active_seconds: int = 0
+    keyboard_activity: float = 0.0
+    keyboard_declined: bool = False
+    mouse_distance: float = 0.0
+    mouse_active_seconds: int = 0
+    mouse_activity: float = 0.0
+    mouse_declined: bool = False
+    modality_switches: int = 0
+    behavior_state: str = "warming"
     source: str = "runtime"
 
 
@@ -61,6 +71,16 @@ class DashboardRepository:
                     dominant_signal TEXT NOT NULL,
                     event_text TEXT NOT NULL,
                     camera_enabled INTEGER NOT NULL,
+                    key_rate_per_min REAL NOT NULL DEFAULT 0,
+                    keyboard_active_seconds INTEGER NOT NULL DEFAULT 0,
+                    keyboard_activity REAL NOT NULL DEFAULT 0,
+                    keyboard_declined INTEGER NOT NULL DEFAULT 0,
+                    mouse_distance REAL NOT NULL DEFAULT 0,
+                    mouse_active_seconds INTEGER NOT NULL DEFAULT 0,
+                    mouse_activity REAL NOT NULL DEFAULT 0,
+                    mouse_declined INTEGER NOT NULL DEFAULT 0,
+                    modality_switches INTEGER NOT NULL DEFAULT 0,
+                    behavior_state TEXT NOT NULL DEFAULT 'warming',
                     source TEXT NOT NULL
                 );
 
@@ -68,12 +88,35 @@ class DashboardRepository:
                 ON metric_snapshots(recorded_at);
                 """
             )
+            self._ensure_metric_snapshot_columns(cursor)
             demo_count = cursor.execute(
                 "SELECT COUNT(*) AS count FROM metric_snapshots WHERE source = 'demo'"
             ).fetchone()["count"]
             if demo_count < 240:
                 cursor.execute("DELETE FROM metric_snapshots WHERE source = 'demo'")
                 self._seed_demo_data(connection)
+
+    @staticmethod
+    def _ensure_metric_snapshot_columns(cursor: sqlite3.Cursor) -> None:
+        existing_columns = {
+            row["name"]
+            for row in cursor.execute("PRAGMA table_info(metric_snapshots)").fetchall()
+        }
+        required_columns = {
+            "key_rate_per_min": "REAL NOT NULL DEFAULT 0",
+            "keyboard_active_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "keyboard_activity": "REAL NOT NULL DEFAULT 0",
+            "keyboard_declined": "INTEGER NOT NULL DEFAULT 0",
+            "mouse_distance": "REAL NOT NULL DEFAULT 0",
+            "mouse_active_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "mouse_activity": "REAL NOT NULL DEFAULT 0",
+            "mouse_declined": "INTEGER NOT NULL DEFAULT 0",
+            "modality_switches": "INTEGER NOT NULL DEFAULT 0",
+            "behavior_state": "TEXT NOT NULL DEFAULT 'warming'",
+        }
+        for column_name, definition in required_columns.items():
+            if column_name not in existing_columns:
+                cursor.execute(f"ALTER TABLE metric_snapshots ADD COLUMN {column_name} {definition}")
 
     def _seed_demo_data(self, connection: sqlite3.Connection) -> None:
         rng = random.Random(42)
@@ -92,27 +135,53 @@ class DashboardRepository:
             fatigue_score = max(15, min(92, fatigue_score))
             focus_score = max(12, min(96, 100 - int(stress_score * 0.42 + fatigue_score * 0.38)))
             face_count = 1 if rng.random() > 0.1 else 0
+            key_rate_per_min = round(max(18.0, min(220.0, focus_score * 2.1 + rng.randint(-22, 22))), 1)
+            keyboard_active_seconds = max(5, min(30, int(key_rate_per_min / 8 + rng.randint(-2, 2))))
+            keyboard_activity = round(
+                0.7 * min(key_rate_per_min / 200.0, 1.0) + 0.3 * (keyboard_active_seconds / 30.0),
+                3,
+            )
+            mouse_distance = round(max(280.0, min(7600.0, 5200 - fatigue_score * 28 + rng.randint(-480, 480))), 1)
+            mouse_active_seconds = max(4, min(30, int(mouse_distance / 260 + rng.randint(-2, 2))))
+            mouse_activity = round(
+                0.5 * min(mouse_distance / 6000.0, 1.0) + 0.5 * (mouse_active_seconds / 30.0),
+                3,
+            )
+            modality_switches = max(1, int((stress_score + focus_score) / 12) + rng.randint(-2, 2))
 
             if fatigue_score >= 76:
                 emotion = "疲惫"
                 mood = "alert"
                 dominant_signal = "eye_squint"
                 event_text = "Demo：检测到疲劳上升"
+                keyboard_declined = 1
+                mouse_declined = 1
+                behavior_state = "fatigued"
             elif stress_score >= 72:
                 emotion = "焦虑"
                 mood = "thinking"
                 dominant_signal = "brow_furrow"
                 event_text = "Demo：压力偏高，建议放松"
+                keyboard_declined = 0
+                mouse_declined = 0
+                modality_switches = max(modality_switches, 12)
+                behavior_state = "anxious"
             elif focus_score >= 72:
                 emotion = "专注"
                 mood = "responding"
                 dominant_signal = "none"
                 event_text = "Demo：专注度稳定"
+                keyboard_declined = 0
+                mouse_declined = 0
+                behavior_state = "steady"
             else:
                 emotion = "平稳"
                 mood = "idle"
                 dominant_signal = "none"
                 event_text = "Demo：状态平稳"
+                keyboard_declined = 0
+                mouse_declined = 0
+                behavior_state = "warming"
 
             rows.append(
                 (
@@ -126,6 +195,16 @@ class DashboardRepository:
                     dominant_signal,
                     event_text,
                     1,
+                    key_rate_per_min,
+                    keyboard_active_seconds,
+                    keyboard_activity,
+                    keyboard_declined,
+                    mouse_distance,
+                    mouse_active_seconds,
+                    mouse_activity,
+                    mouse_declined,
+                    modality_switches,
+                    behavior_state,
                     "demo",
                 )
             )
@@ -134,8 +213,11 @@ class DashboardRepository:
             """
             INSERT INTO metric_snapshots (
                 recorded_at, mood, emotion, stress_score, fatigue_score, focus_score,
-                face_count, dominant_signal, event_text, camera_enabled, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                face_count, dominant_signal, event_text, camera_enabled,
+                key_rate_per_min, keyboard_active_seconds, keyboard_activity, keyboard_declined,
+                mouse_distance, mouse_active_seconds, mouse_activity, mouse_declined,
+                modality_switches, behavior_state, source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -196,8 +278,11 @@ class DashboardRepository:
                     """
                     INSERT INTO metric_snapshots (
                         recorded_at, mood, emotion, stress_score, fatigue_score, focus_score,
-                        face_count, dominant_signal, event_text, camera_enabled, source
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        face_count, dominant_signal, event_text, camera_enabled,
+                        key_rate_per_min, keyboard_active_seconds, keyboard_activity, keyboard_declined,
+                        mouse_distance, mouse_active_seconds, mouse_activity, mouse_declined,
+                        modality_switches, behavior_state, source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         snapshot.recorded_at,
@@ -210,6 +295,16 @@ class DashboardRepository:
                         snapshot.dominant_signal,
                         snapshot.event_text,
                         int(snapshot.camera_enabled),
+                        snapshot.key_rate_per_min,
+                        snapshot.keyboard_active_seconds,
+                        snapshot.keyboard_activity,
+                        int(snapshot.keyboard_declined),
+                        snapshot.mouse_distance,
+                        snapshot.mouse_active_seconds,
+                        snapshot.mouse_activity,
+                        int(snapshot.mouse_declined),
+                        snapshot.modality_switches,
+                        snapshot.behavior_state,
                         snapshot.source,
                     ),
                 )
@@ -227,7 +322,8 @@ class DashboardRepository:
             rows = connection.execute(
                 """
                 SELECT recorded_at, emotion, stress_score, fatigue_score, focus_score,
-                       face_count, dominant_signal, event_text, camera_enabled
+                       face_count, dominant_signal, event_text, camera_enabled,
+                       keyboard_activity, mouse_activity, modality_switches, behavior_state
                 FROM metric_snapshots
                 WHERE recorded_at >= ? AND recorded_at < ?
                 ORDER BY recorded_at ASC
@@ -283,21 +379,33 @@ class DashboardRepository:
                     "stress": [],
                     "fatigue": [],
                     "focus": [],
+                    "keyboard_activity": [],
+                    "mouse_activity": [],
+                    "switches": [],
                 },
             )
             stats["stress"].append(row["stress_score"])
             stats["fatigue"].append(row["fatigue_score"])
             stats["focus"].append(row["focus_score"])
+            stats["keyboard_activity"].append(float(row["keyboard_activity"]))
+            stats["mouse_activity"].append(float(row["mouse_activity"]))
+            stats["switches"].append(int(row["modality_switches"]))
 
         categories = [grouped[key]["label"] for key in grouped]
         stress_series = [round(sum(grouped[key]["stress"]) / len(grouped[key]["stress"]), 1) for key in grouped]
         fatigue_series = [round(sum(grouped[key]["fatigue"]) / len(grouped[key]["fatigue"]), 1) for key in grouped]
         focus_series = [round(sum(grouped[key]["focus"]) / len(grouped[key]["focus"]), 1) for key in grouped]
+        keyboard_series = [round(sum(grouped[key]["keyboard_activity"]) / len(grouped[key]["keyboard_activity"]), 3) for key in grouped]
+        mouse_series = [round(sum(grouped[key]["mouse_activity"]) / len(grouped[key]["mouse_activity"]), 3) for key in grouped]
+        switch_series = [round(sum(grouped[key]["switches"]) / len(grouped[key]["switches"]), 1) for key in grouped]
 
         averages = {
             "avg_stress": round(sum(stress_series) / max(1, len(stress_series)), 1),
             "avg_fatigue": round(sum(fatigue_series) / max(1, len(fatigue_series)), 1),
             "avg_focus": round(sum(focus_series) / max(1, len(focus_series)), 1),
+            "avg_keyboard_activity": round(sum(keyboard_series) / max(1, len(keyboard_series)), 3),
+            "avg_mouse_activity": round(sum(mouse_series) / max(1, len(mouse_series)), 3),
+            "avg_switches": round(sum(switch_series) / max(1, len(switch_series)), 1),
         }
         period_label = {
             "day": "前一天",
@@ -315,6 +423,8 @@ class DashboardRepository:
                 "压力": stress_series,
                 "疲劳": fatigue_series,
                 "专注": focus_series,
+                "键盘活跃": keyboard_series,
+                "鼠标活跃": mouse_series,
             },
             "emotion_distribution": [
                 {"name": row["emotion"], "value": row["count"]}
@@ -392,7 +502,10 @@ class DashboardRepository:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT emotion, stress_score, fatigue_score, focus_score, dominant_signal, event_text
+                SELECT emotion, stress_score, fatigue_score, focus_score, dominant_signal, event_text,
+                       key_rate_per_min, keyboard_activity, keyboard_declined,
+                       mouse_distance, mouse_activity, mouse_declined,
+                       modality_switches, behavior_state
                 FROM metric_snapshots
                 WHERE recorded_at >= ? AND recorded_at < ?
                 ORDER BY recorded_at ASC
@@ -410,15 +523,21 @@ class DashboardRepository:
 
         emotion_counter: dict[str, int] = {}
         signal_counter: dict[str, int] = {}
+        behavior_counter: dict[str, int] = {}
         for row in rows:
             emotion_counter[row["emotion"]] = emotion_counter.get(row["emotion"], 0) + 1
             signal_key = "稳定" if row["dominant_signal"] == "none" else row["dominant_signal"]
             signal_counter[signal_key] = signal_counter.get(signal_key, 0) + 1
+            behavior_counter[row["behavior_state"]] = behavior_counter.get(row["behavior_state"], 0) + 1
 
         top_emotion = max(emotion_counter, key=emotion_counter.get) if emotion_counter else "平稳"
         top_signal = max(signal_counter, key=signal_counter.get) if signal_counter else "稳定"
+        top_behavior_state = max(behavior_counter, key=behavior_counter.get) if behavior_counter else "warming"
         high_stress_count = sum(1 for row in rows if row["stress_score"] >= 75)
         high_fatigue_count = sum(1 for row in rows if row["fatigue_score"] >= 75)
+        keyboard_decline_count = sum(1 for row in rows if row["keyboard_declined"])
+        mouse_decline_count = sum(1 for row in rows if row["mouse_declined"])
+        high_switch_count = sum(1 for row in rows if row["modality_switches"] >= 10)
         rest_activity_count = sum(
             1
             for row in rows
@@ -433,13 +552,21 @@ class DashboardRepository:
             "average_stress": _avg("stress_score"),
             "average_fatigue": _avg("fatigue_score"),
             "average_focus": _avg("focus_score"),
+            "average_keyboard_activity": _avg("keyboard_activity"),
+            "average_mouse_activity": _avg("mouse_activity"),
+            "average_key_rate_per_min": _avg("key_rate_per_min"),
+            "average_mouse_distance": _avg("mouse_distance"),
             "peak_stress": max((row["stress_score"] for row in rows), default=0),
             "peak_fatigue": max((row["fatigue_score"] for row in rows), default=0),
             "lowest_focus": min((row["focus_score"] for row in rows), default=0),
             "top_emotion": top_emotion,
             "top_signal": top_signal,
+            "top_behavior_state": top_behavior_state,
             "high_stress_count": high_stress_count,
             "high_fatigue_count": high_fatigue_count,
+            "keyboard_decline_count": keyboard_decline_count,
+            "mouse_decline_count": mouse_decline_count,
+            "high_switch_count": high_switch_count,
             "rest_activity_count": rest_activity_count,
             "events": events,
         }
