@@ -12,7 +12,7 @@ from typing import Optional
 import sys
 
 import cv2
-from PySide6.QtCore import QDate, QDateTime, QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
+from PySide6.QtCore import QDate, QDateTime, QEvent, QObject, QPoint, QThread, QTimer, Qt, QUrl, Signal, Property, QSize, Slot
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QMovie, QPainter, QPixmap, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QStackedWidget,
     QTextBrowser,
     QVBoxLayout,
@@ -1126,9 +1127,12 @@ class StatCard(QFrame):
 class EyeMuseWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
         self.setWindowTitle("EyeMuse")
         self.resize(1420, 920)
         self.setMinimumSize(1180, 760)
+        self._dragging_window = False
+        self._drag_offset = QPoint()
 
         self._camera_worker: Optional[CameraWorker] = None
         self._llm_thread: Optional[QThread] = None
@@ -1173,6 +1177,7 @@ class EyeMuseWindow(QMainWindow):
 
         self._build_ui()
         self._update_companion_controls()
+        self._update_window_control_buttons()
         self._start_activity_monitor()
         self._apply_theme()
         self._refresh_dashboard_page()
@@ -1369,7 +1374,9 @@ class EyeMuseWindow(QMainWindow):
 
     def _build_nav_bar(self) -> QFrame:
         frame = QFrame()
+        self.nav_bar_frame = frame
         frame.setObjectName("NavBar")
+        frame.installEventFilter(self)
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(8, 1, 8, 1)
         layout.setSpacing(0)
@@ -1379,6 +1386,7 @@ class EyeMuseWindow(QMainWindow):
         self.nav_logo_label.setObjectName("NavLogo")
         self.nav_logo_label.setFixedWidth(320)
         self.nav_logo_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.nav_logo_label.installEventFilter(self)
         logo_pixmap = QPixmap(str(logo_path))
         if not logo_pixmap.isNull():
             logo_pixmap = _make_dark_background_transparent(logo_pixmap)
@@ -1386,8 +1394,40 @@ class EyeMuseWindow(QMainWindow):
         else:
             self.nav_logo_label.setText("EyeMuse")
 
-        self.nav_right_spacer = QWidget()
-        self.nav_right_spacer.setFixedWidth(320)
+        self.nav_right_controls = QWidget()
+        self.nav_right_controls.setObjectName("WindowControlGroup")
+        self.nav_right_controls.setFixedWidth(320)
+        right_controls_layout = QHBoxLayout(self.nav_right_controls)
+        right_controls_layout.setContentsMargins(8, 5, 8, 5)
+        right_controls_layout.setSpacing(6)
+        right_controls_layout.addStretch(1)
+
+        self.window_minimize_button = QPushButton()
+        self.window_maximize_button = QPushButton()
+        self.window_close_button = QPushButton()
+        for button in (self.window_minimize_button, self.window_maximize_button, self.window_close_button):
+            button.setObjectName("WindowControlButton")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setFixedSize(30, 30)
+            button.setFocusPolicy(Qt.NoFocus)
+        self.window_minimize_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMinButton))
+        self.window_maximize_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarMaxButton))
+        self.window_close_button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TitleBarCloseButton))
+        self.window_minimize_button.setIconSize(QSize(14, 14))
+        self.window_maximize_button.setIconSize(QSize(14, 14))
+        self.window_close_button.setIconSize(QSize(14, 14))
+        self.window_minimize_button.setToolTip("最小化")
+        self.window_maximize_button.setToolTip("最大化 / 还原")
+        self.window_close_button.setToolTip("关闭")
+        self.window_close_button.setObjectName("WindowCloseButton")
+
+        self.window_minimize_button.clicked.connect(self.showMinimized)
+        self.window_maximize_button.clicked.connect(self._toggle_window_max_restore)
+        self.window_close_button.clicked.connect(self.close)
+
+        right_controls_layout.addWidget(self.window_minimize_button)
+        right_controls_layout.addWidget(self.window_maximize_button)
+        right_controls_layout.addWidget(self.window_close_button)
 
         self.home_nav_button = QPushButton("主页面")
         self.dashboard_nav_button = QPushButton("可视化分析")
@@ -1411,8 +1451,50 @@ class EyeMuseWindow(QMainWindow):
         layout.addSpacing(14)
         layout.addWidget(self.report_nav_button, 0, Qt.AlignVCenter)
         layout.addStretch(1)
-        layout.addWidget(self.nav_right_spacer, 0, Qt.AlignRight | Qt.AlignVCenter)
+        layout.addWidget(self.nav_right_controls, 0, Qt.AlignRight | Qt.AlignVCenter)
         return frame
+
+    def _toggle_window_max_restore(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._update_window_control_buttons()
+
+    def _update_window_control_buttons(self) -> None:
+        if hasattr(self, "window_maximize_button"):
+            icon = (
+                QStyle.StandardPixmap.SP_TitleBarNormalButton
+                if self.isMaximized()
+                else QStyle.StandardPixmap.SP_TitleBarMaxButton
+            )
+            self.window_maximize_button.setIcon(self.style().standardIcon(icon))
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_window_control_buttons()
+        super().changeEvent(event)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched in {getattr(self, "nav_logo_label", None), getattr(self, "nav_bar_frame", None)}:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._dragging_window = True
+                self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                return True
+            if event.type() == QEvent.Type.MouseMove and self._dragging_window and event.buttons() & Qt.LeftButton:
+                if self.isMaximized():
+                    self.showNormal()
+                    self._update_window_control_buttons()
+                    self._drag_offset = QPoint(self.width() // 2, 24)
+                self.move(event.globalPosition().toPoint() - self._drag_offset)
+                return True
+            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self._dragging_window = False
+                return True
+            if event.type() == QEvent.Type.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                self._toggle_window_max_restore()
+                return True
+        return super().eventFilter(watched, event)
 
     def _build_home_page(self) -> QWidget:
         page = QWidget()
@@ -3199,6 +3281,25 @@ class EyeMuseWindow(QMainWindow):
                 color: #ffffff;
                 background: rgba(56, 189, 248, 32);
                 border: 1px solid rgba(56, 189, 248, 95);
+            }
+            #WindowControlGroup {
+                background: transparent;
+                border: none;
+            }
+            QPushButton#WindowControlButton {
+                background: transparent;
+                border: none;
+                border-radius: 15px;
+                padding: 0;
+            }
+            QPushButton#WindowControlButton:hover {
+                background: rgba(148, 163, 184, 26);
+            }
+            QPushButton#WindowControlButton:pressed {
+                background: rgba(148, 163, 184, 42);
+            }
+            QPushButton#WindowCloseButton:hover {
+                background: rgba(239, 68, 68, 28);
             }
             #Page {
                 background: transparent;
