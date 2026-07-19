@@ -128,20 +128,25 @@ class CameraWorker(QObject):
     face_count_changed = Signal(int)
     analysis_changed = Signal(object)
     open_failed = Signal(str)
+    finished = Signal()
 
     def __init__(self, camera_index: int = 0) -> None:
         super().__init__()
         self._camera_index = camera_index
         self._capture: Optional[cv2.VideoCapture] = None
         self._timer = QTimer(self)
-        self._timer.setInterval(33)
+        self._timer.setInterval(100)
         self._timer.timeout.connect(self._read_frame)
         self._analyzer = None
         self._detector = None
+        self._stopped = True
 
     @Slot()
     def start(self) -> None:
+        self._stopped = False
         if not self._open_capture():
+            self._stopped = True
+            self.finished.emit()
             return
 
         if YOLOFaceDetector is not None:
@@ -171,6 +176,9 @@ class CameraWorker(QObject):
 
     @Slot()
     def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
         self._timer.stop()
         if self._analyzer is not None and hasattr(self._analyzer, "close"):
             self._analyzer.close()
@@ -179,7 +187,7 @@ class CameraWorker(QObject):
             self._detector.close()
         self._detector = None
         self._cleanup_capture()
-        self.status_changed.emit("摄像头已关闭")
+        self.finished.emit()
 
     def _cleanup_capture(self) -> None:
         if self._capture is not None:
@@ -1208,6 +1216,8 @@ class StatCard(QFrame):
 
 
 class EyeMuseWindow(QMainWindow):
+    camera_stop_requested = Signal()
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
@@ -1218,6 +1228,7 @@ class EyeMuseWindow(QMainWindow):
         self._drag_offset = QPoint()
 
         self._camera_worker: Optional[CameraWorker] = None
+        self._camera_thread: Optional[QThread] = None
         self._llm_thread: Optional[QThread] = None
         self._llm_worker: Optional[LLMStreamWorker] = None
         self._conversation: list[ConversationItem] = []
@@ -1253,20 +1264,35 @@ class EyeMuseWindow(QMainWindow):
         self._latest_weekly_report_md = ""
         self._latest_daily_report_html = ""
         self._latest_weekly_report_html = ""
+        self._report_snapshot_cache: dict[str, str] = {}
+        self._report_payload_key = ""
         self._streaming_reply_index: Optional[int] = None
         self._streaming_user_text: str = ""
         self._current_pet_mood = PetMood.idle
         self._current_pet_hint = "等待用户输入，或开启摄像头观察状态变化。"
         self._current_companion_mode = "idle"
         self._companion_window: Optional[CompanionPetWindow] = None
+        self._dashboard_refresh_timer = QTimer(self)
+        self._dashboard_refresh_timer.setSingleShot(True)
+        self._dashboard_refresh_timer.setInterval(2000)
+        self._dashboard_refresh_timer.timeout.connect(self._refresh_dashboard_page)
+        self._report_refresh_timer = QTimer(self)
+        self._report_refresh_timer.setSingleShot(True)
+        self._report_refresh_timer.setInterval(10000)
+        self._report_refresh_timer.timeout.connect(self._refresh_report_page)
+        self._repository_sync_timer = QTimer(self)
+        self._repository_sync_timer.setInterval(10000)
+        self._repository_sync_timer.timeout.connect(self._sync_dashboard_repository)
 
         self._build_ui()
         self._update_companion_controls()
         self._update_window_control_buttons()
         self._start_activity_monitor()
         self._apply_theme()
+        self._sync_dashboard_repository()
         self._refresh_dashboard_page()
         self._refresh_report_page()
+        self._repository_sync_timer.start()
         self._append_system_message("EyeMuse 前端原型已就绪，输入文本或打开摄像头开始交互。")
         QTimer.singleShot(0, self._enter_default_companion_mode)
 
@@ -1429,8 +1455,7 @@ class EyeMuseWindow(QMainWindow):
                 self.behavior_card.setValue(f"{behavior_label} · 键{keyboard_activity:.2f} 鼠{mouse_activity:.2f}")
         self._refresh_companion_feedback()
         self._maybe_apply_behavior_only_mood()
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -2232,13 +2257,27 @@ class EyeMuseWindow(QMainWindow):
             behavior_state=str(self._behavior_summary.get("behavior_state", "warming")),
         )
 
-    def _sync_dashboard_repository(self) -> dict | None:
+    def _sync_dashboard_repository(self) -> None:
         if self._dashboard_repository is None:
-            return None
+            return
         snapshot = self._build_realtime_snapshot()
         if snapshot is not None:
             self._dashboard_repository.record_runtime_snapshot(snapshot)
-        return self._dashboard_repository.get_dashboard_payload()
+
+    def _schedule_analytics_refresh(self) -> None:
+        if (
+            not hasattr(self, "page_stack")
+            or not self.isVisible()
+            or self.isMinimized()
+        ):
+            return
+        current_page = self.page_stack.currentWidget()
+        if current_page is self.dashboard_page:
+            if not self._dashboard_refresh_timer.isActive():
+                self._dashboard_refresh_timer.start()
+        elif current_page is self.report_page:
+            if not self._report_refresh_timer.isActive():
+                self._report_refresh_timer.start()
 
     def _set_dashboard_period(self, period: str) -> None:
         if period == self._dashboard_period:
@@ -3142,7 +3181,8 @@ class EyeMuseWindow(QMainWindow):
             self.dashboard_chart_fallback.setHtml(self._build_dashboard_fallback_html(payload))
 
     def _refresh_dashboard_page(self) -> None:
-        self._sync_dashboard_repository()
+        if self._dashboard_refresh_timer.isActive():
+            self._dashboard_refresh_timer.stop()
         if self._dashboard_repository is not None:
             if self._dashboard_period == "custom":
                 start_date, end_date = self._dashboard_custom_range
@@ -3170,7 +3210,6 @@ class EyeMuseWindow(QMainWindow):
             self._update_dashboard_chart_view(payload)
 
     def _refresh_report_page(self) -> None:
-        self._sync_dashboard_repository()
         today = QDate.currentDate().addDays(-1).toPython()
         week_start = QDate.currentDate().addDays(-7).toPython()
         week_end = QDate.currentDate().addDays(-1).toPython()
@@ -3191,6 +3230,21 @@ class EyeMuseWindow(QMainWindow):
 
         if not hasattr(self, "weekly_report_title"):
             return
+
+        report_payload_key = json.dumps(
+            {
+                "daily": daily_summary,
+                "period": period_summary,
+                "custom_mode": self._report_custom_mode,
+                "period_title": period_title,
+                "period_mode": period_mode,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if report_payload_key == self._report_payload_key:
+            return
+        self._report_payload_key = report_payload_key
 
         self.weekly_report_title.setText(period_title)
         self.report_custom_apply_button.setProperty("active", self._report_custom_mode)
@@ -3244,7 +3298,10 @@ class EyeMuseWindow(QMainWindow):
 
     def _write_report_snapshot(self, file_name: str, content: str) -> Path:
         path = self._report_storage_dir() / file_name
+        if self._report_snapshot_cache.get(file_name) == content and path.exists():
+            return path
         path.write_text(content, encoding="utf-8")
+        self._report_snapshot_cache[file_name] = content
         return path
 
     def _export_report_markdown(self, report_type: str) -> None:
@@ -3342,7 +3399,8 @@ class EyeMuseWindow(QMainWindow):
         )
 
     def _refresh_report_page(self) -> None:
-        self._sync_dashboard_repository()
+        if self._report_refresh_timer.isActive():
+            self._report_refresh_timer.stop()
         today = QDate.currentDate().addDays(-1).toPython()
         week_start = QDate.currentDate().addDays(-7).toPython()
         week_end = QDate.currentDate().addDays(-1).toPython()
@@ -3367,6 +3425,21 @@ class EyeMuseWindow(QMainWindow):
         if not hasattr(self, "weekly_report_title"):
             return
 
+        report_payload_key = json.dumps(
+            {
+                "daily": daily_summary,
+                "period": period_summary,
+                "custom_mode": self._report_custom_mode,
+                "period_title": period_title,
+                "period_mode": period_mode,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if report_payload_key == self._report_payload_key:
+            return
+        self._report_payload_key = report_payload_key
+
         self.weekly_report_title.setText(period_title)
         self.report_custom_apply_button.setProperty("active", self._report_custom_mode)
         self.report_custom_apply_button.style().unpolish(self.report_custom_apply_button)
@@ -3379,34 +3452,42 @@ class EyeMuseWindow(QMainWindow):
         daily_range = f"{today.isoformat()} 至 {today.isoformat()}"
         weekly_range = f"{period_summary.get('start_date', week_start.isoformat())} 至 {period_summary.get('end_date', week_end.isoformat())}"
 
-        self._latest_daily_report_md = self._build_health_report_markdown(
+        daily_report_md = self._build_health_report_markdown(
             title=daily_title,
             summary=daily_summary,
             range_label=daily_range,
             mode_label="日维度价值观察",
         )
-        self._latest_weekly_report_md = self._build_health_report_markdown(
+        weekly_report_md = self._build_health_report_markdown(
             title=period_title,
             summary=period_summary,
             range_label=weekly_range,
             mode_label=period_mode,
         )
-        self._latest_daily_report_html = self._build_health_report_html(
+        daily_report_html = self._build_health_report_html(
             title=daily_title,
             summary=daily_summary,
             range_label=daily_range,
             mode_label="日维度价值观察",
         )
-        self._latest_weekly_report_html = self._build_health_report_html(
+        weekly_report_html = self._build_health_report_html(
             title=period_title,
             summary=period_summary,
             range_label=weekly_range,
             mode_label=period_mode,
         )
-        self.daily_report_view.setHtml(self._latest_daily_report_html)
-        self.weekly_report_view.setHtml(self._latest_weekly_report_html)
-        self.daily_report_view.verticalScrollBar().setValue(0)
-        self.weekly_report_view.verticalScrollBar().setValue(0)
+        daily_html_changed = daily_report_html != self._latest_daily_report_html
+        weekly_html_changed = weekly_report_html != self._latest_weekly_report_html
+        self._latest_daily_report_md = daily_report_md
+        self._latest_weekly_report_md = weekly_report_md
+        self._latest_daily_report_html = daily_report_html
+        self._latest_weekly_report_html = weekly_report_html
+        if daily_html_changed:
+            self.daily_report_view.setHtml(daily_report_html)
+            self.daily_report_view.verticalScrollBar().setValue(0)
+        if weekly_html_changed:
+            self.weekly_report_view.setHtml(weekly_report_html)
+            self.weekly_report_view.verticalScrollBar().setValue(0)
         self._write_report_snapshot("daily_latest.md", self._latest_daily_report_md)
         self._write_report_snapshot("daily_latest.html", self._latest_daily_report_html)
         period_file = "custom_latest" if self._report_custom_mode else "weekly_latest"
@@ -4138,8 +4219,7 @@ class EyeMuseWindow(QMainWindow):
         self.pet_hint.setText(hint)
         self.statusBar().showMessage(hint, 3000)
         self._refresh_companion_feedback()
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _update_mode_cards(self, mood: str) -> None:
         self.mood_badge.setText(mood)
@@ -4149,8 +4229,7 @@ class EyeMuseWindow(QMainWindow):
         self._conversation.append(ConversationItem("system", text, self._now()))
         self._refresh_conversation()
         self.event_card.setValue(text)
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _inject_message(self, role: str, text: str) -> None:
         if role == "user":
@@ -4327,8 +4406,7 @@ class EyeMuseWindow(QMainWindow):
         self.conversation_view.verticalScrollBar().setValue(self.conversation_view.verticalScrollBar().maximum())
         if self._companion_window is not None:
             self._companion_window.set_chat_history_html(self._render_companion_chat_html())
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _clear_conversation(self) -> None:
         self._conversation.clear()
@@ -4542,13 +4620,22 @@ class EyeMuseWindow(QMainWindow):
         if self._camera_worker is not None:
             return
 
-        self._camera_worker = CameraWorker()
-        self._camera_worker.frame_ready.connect(self._update_camera_frame)
-        self._camera_worker.status_changed.connect(self._update_camera_status)
-        self._camera_worker.face_count_changed.connect(self._update_face_count)
-        self._camera_worker.analysis_changed.connect(self._update_analysis_metrics)
-        self._camera_worker.open_failed.connect(self._handle_camera_open_failed)
-        self._camera_worker.start()
+        camera_thread = QThread(self)
+        camera_worker = CameraWorker()
+        camera_worker.moveToThread(camera_thread)
+        camera_thread.started.connect(camera_worker.start)
+        camera_worker.frame_ready.connect(self._update_camera_frame)
+        camera_worker.status_changed.connect(self._update_camera_status)
+        camera_worker.face_count_changed.connect(self._update_face_count)
+        camera_worker.analysis_changed.connect(self._update_analysis_metrics)
+        camera_worker.open_failed.connect(self._handle_camera_open_failed)
+        self.camera_stop_requested.connect(camera_worker.stop)
+        camera_worker.finished.connect(camera_thread.quit, Qt.DirectConnection)
+        camera_thread.finished.connect(camera_worker.deleteLater)
+        camera_thread.finished.connect(self._handle_camera_thread_finished)
+        self._camera_worker = camera_worker
+        self._camera_thread = camera_thread
+        camera_thread.start()
 
         self._local_camera_enabled = True
         self._set_camera_toggle_checked(True)
@@ -4564,20 +4651,38 @@ class EyeMuseWindow(QMainWindow):
         self._set_mood(PetMood.listening, "正在观察摄像头状态。")
 
     def _stop_camera(self) -> None:
-        if self._camera_worker is not None:
-            self._camera_worker.stop()
+        camera_thread = self._camera_thread
+        if self._camera_worker is not None and camera_thread is not None and camera_thread.isRunning():
+            self.camera_stop_requested.emit()
+            if not camera_thread.wait(2500):
+                camera_thread.requestInterruption()
+                camera_thread.quit()
+                camera_thread.wait(500)
         self._camera_worker = None
+        self._camera_thread = None
         self._set_camera_toggle_checked(False)
         self._reset_camera_ui()
         self._set_mood(PetMood.offline, "摄像头已关闭，当前处于离线状态。")
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _handle_camera_open_failed(self, message: str) -> None:
-        self._camera_worker = None
         self._reset_camera_ui(status=message, inline_status="异常", note=message)
         self._set_mood(PetMood.alert, message)
         self._set_camera_toggle_checked(False)
+
+    def _handle_camera_thread_finished(self) -> None:
+        finished_thread = self.sender()
+        if finished_thread is not self._camera_thread:
+            return
+        self._camera_worker = None
+        self._camera_thread = None
+        if self._local_camera_enabled:
+            self._reset_camera_ui(
+                status="连接中断",
+                inline_status="异常",
+                note="摄像头分析线程已停止，可关闭后重新开启。",
+            )
+            self._set_camera_toggle_checked(False)
 
     def _reset_camera_ui(
         self,
@@ -4611,6 +4716,8 @@ class EyeMuseWindow(QMainWindow):
         self._refresh_companion_feedback()
 
     def _update_camera_frame(self, image: QImage) -> None:
+        if not self.isVisible() or self.isMinimized():
+            return
         pixmap = QPixmap.fromImage(image)
         scaled = pixmap.scaled(self.camera_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.camera_preview.setPixmap(scaled)
@@ -4623,14 +4730,14 @@ class EyeMuseWindow(QMainWindow):
         self.event_card.setValue(message)
         if any(flag in message for flag in ("失败", "无法", "异常", "不可用")):
             self._set_mood(PetMood.alert, message)
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _update_face_count(self, count: int) -> None:
+        if count == self._face_count:
+            return
         self._face_count = count
         self.face_card.setValue(f"{count} 个面部")
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _update_analysis_metrics(self, payload: object) -> None:
         if not isinstance(payload, dict):
@@ -4727,10 +4834,8 @@ class EyeMuseWindow(QMainWindow):
             else:
                 self.camera_note.setText("等待检测到面部后开始分析。")
                 self.event_card.setValue("等待面部")
-        self._refresh_companion_feedback()
         self._set_mood(monitoring_mood, monitoring_hint)
-        self._refresh_dashboard_page()
-        self._refresh_report_page()
+        self._schedule_analytics_refresh()
 
     def _current_summary(self) -> str:
         camera_state = "开启" if self._local_camera_enabled else "关闭"
