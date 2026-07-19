@@ -70,6 +70,7 @@ except Exception:  # pragma: no cover - optional runtime dependency path
 
 class PetMood(str, Enum):
     idle = "idle"
+    hover = "hover"
     listening = "listening"
     thinking = "thinking"
     responding = "responding"
@@ -363,6 +364,8 @@ class PetAvatar(QLabel):
     ) -> None:
         super().__init__(parent)
         self._mood = PetMood.idle
+        self._hover_once_active = False
+        self._last_frame_number = -1
         self._movie: Optional[QMovie] = None
         self._max_movie_size = max_movie_size or QSize(320, 320)
         self._render_scale = max(0.5, min(1.0, render_scale))
@@ -373,12 +376,14 @@ class PetAvatar(QLabel):
         self._asset_dir = Path(__file__).resolve().parents[1] / "assets"
         self._mood_assets = {
             PetMood.idle: "idle.gif",
+            PetMood.hover: "hover.gif",
             PetMood.listening: "listening.gif",
             PetMood.thinking: "thinking.gif",
             PetMood.responding: "responding.gif",
             PetMood.alert: "alert.gif",
             PetMood.offline: "offline.gif",
         }
+        self._current_asset_name: Optional[str] = None
 
         if show_background:
             self.setStyleSheet(
@@ -415,13 +420,43 @@ class PetAvatar(QLabel):
 
     def _handle_movie_frame_changed(self, _frame_number: int) -> None:
         self._render_current_frame()
+        if self._hover_once_active and self._current_asset_name == self._mood_assets[PetMood.hover]:
+            if self._last_frame_number >= 0 and _frame_number < self._last_frame_number:
+                self._hover_once_active = False
+                self._last_frame_number = -1
+                self._apply_visual_mood()
+                return
+            self._last_frame_number = _frame_number
 
     def setMood(self, mood: PetMood) -> None:
-        if self._mood == mood and self._movie is not None:
+        if self._mood == mood:
+            self._apply_visual_mood()
             return
 
         self._mood = mood
+        self._apply_visual_mood()
+
+    def playHoverOnce(self) -> None:
+        hover_asset = self._asset_dir / self._mood_assets[PetMood.hover]
+        if not hover_asset.exists():
+            return
+
+        self._hover_once_active = True
+        self._last_frame_number = -1
+        self._apply_visual_mood()
+
+    def _effective_mood(self) -> PetMood:
+        if self._hover_once_active:
+            return PetMood.hover
+        return self._mood
+
+    def _apply_visual_mood(self) -> None:
+        mood = self._effective_mood()
         file_name = self._mood_assets.get(mood, "idle.gif")
+        if self._current_asset_name == file_name and self._movie is not None:
+            return
+
+        self._current_asset_name = file_name
         asset_path = self._asset_dir / file_name
 
         if not asset_path.exists():
@@ -450,6 +485,7 @@ class PetAvatar(QLabel):
         self.clear()
         self._movie = QMovie(str(asset_path))
         self._movie.setCacheMode(QMovie.CacheAll)
+        self._last_frame_number = -1
         self._movie.frameChanged.connect(self._handle_movie_frame_changed)
         self._movie.start()
         self._movie.jumpToFrame(0)
@@ -641,10 +677,15 @@ class CompanionPetWindow(QWidget):
         layout.addWidget(self.toolbar_frame)
 
         self._drag_offset: Optional[QPoint] = None
+        self._press_global_pos: Optional[QPoint] = None
+        self._press_local_pos: Optional[QPoint] = None
         self._current_mode = "idle"
 
     def setMood(self, mood: PetMood) -> None:
         self.avatar.setMood(mood)
+
+    def _is_avatar_hit(self, position: QPoint) -> bool:
+        return self.avatar.geometry().contains(position)
 
     def set_companion_feedback(
         self,
@@ -769,7 +810,9 @@ class CompanionPetWindow(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
-            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            self._press_global_pos = event.globalPosition().toPoint()
+            self._press_local_pos = event.position().toPoint()
+            self._drag_offset = None
             event.accept()
             return
         if event.button() == Qt.MiddleButton:
@@ -779,15 +822,34 @@ class CompanionPetWindow(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._drag_offset is not None and event.buttons() & Qt.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_offset)
-            event.accept()
-            return
+        if event.buttons() & Qt.LeftButton and self._press_global_pos is not None:
+            if self._drag_offset is None:
+                movement = event.globalPosition().toPoint() - self._press_global_pos
+                if movement.manhattanLength() < QApplication.startDragDistance():
+                    event.accept()
+                    return
+                self._drag_offset = self._press_global_pos - self.frameGeometry().topLeft()
+            if self._drag_offset is not None:
+                self.move(event.globalPosition().toPoint() - self._drag_offset)
+                event.accept()
+                return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         self._drag_offset = None
+        self._press_global_pos = None
+        self._press_local_pos = None
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton and self._is_avatar_hit(event.position().toPoint()):
+            self._drag_offset = None
+            self._press_global_pos = None
+            self._press_local_pos = None
+            self.avatar.playHoverOnce()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 def _clamp_unit(value: float) -> float:
