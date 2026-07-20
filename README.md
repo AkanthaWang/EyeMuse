@@ -1,6 +1,8 @@
 # EyeMuse
 > EyeMuse: Multimodal Desktop Pet with Real-time Fatigue and Emotion Detection via Camera &amp; LLM Interaction
 
+![](logo.png)
+
 ## 🌟 项目概述
 EyeMuse 是一款多模态情绪感知桌面宠物，旨在探索人与人工智能之间更自然、更具共情能力的交互方式。
 
@@ -16,13 +18,13 @@ EyeMuse 是一款多模态情绪感知桌面宠物，旨在探索人与人工智
 EyeMuse 的目标是打造一个不仅 理解用户说了什么，更能 感知用户感受如何 的 AI 伙伴。
 
 
-
 ## 技术栈
-🐍 Python
-🖼️ GUI：PySide6 或 PyQt6
-🧩 架构：Qt 桌面界面 + Python 业务模块
-📦 数据存储：本地文件（JSON / SQLite 等）
-🎞️ 像素动画：帧数据驱动
+
+- 🐍 Python
+- 🖼️ GUI：PySide6 或 PyQt6
+- 🧩 架构：Qt 桌面界面 + Python 业务模块
+- 📦 数据存储：本地文件（JSON / SQLite 等）
+- 🎞️ 像素动画：帧数据驱动
 
 ## 项目框架
 
