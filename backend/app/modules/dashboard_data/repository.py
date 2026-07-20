@@ -351,6 +351,81 @@ class DashboardRepository:
                 )
             connection.commit()
 
+    def record_rest_activity(
+        self,
+        snapshot: RealtimeSnapshot,
+        *,
+        duration_seconds: int,
+    ) -> None:
+        duration_seconds = max(1, int(duration_seconds))
+        if duration_seconds % 60 == 0:
+            duration_text = f"{duration_seconds // 60} 分钟"
+        else:
+            duration_text = f"{duration_seconds} 秒"
+        recorded_at = datetime.now().isoformat(timespec="seconds")
+        event_text = f"完成 {duration_text} 离屏休息，已计入休息次数统计"
+
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO metric_snapshots (
+                    recorded_at, mood, emotion, stress_score, fatigue_score, focus_score,
+                    face_count, dominant_signal, event_text, camera_enabled,
+                    key_rate_per_min, keyboard_active_seconds, keyboard_activity, keyboard_declined,
+                    mouse_distance, mouse_active_seconds, mouse_activity, mouse_declined,
+                    modality_switches, behavior_state, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    recorded_at,
+                    snapshot.mood,
+                    snapshot.emotion,
+                    snapshot.stress_score,
+                    snapshot.fatigue_score,
+                    snapshot.focus_score,
+                    snapshot.face_count,
+                    snapshot.dominant_signal,
+                    event_text,
+                    int(snapshot.camera_enabled),
+                    snapshot.key_rate_per_min,
+                    snapshot.keyboard_active_seconds,
+                    snapshot.keyboard_activity,
+                    int(snapshot.keyboard_declined),
+                    snapshot.mouse_distance,
+                    snapshot.mouse_active_seconds,
+                    snapshot.mouse_activity,
+                    int(snapshot.mouse_declined),
+                    snapshot.modality_switches,
+                    snapshot.behavior_state,
+                    "rest",
+                ),
+            )
+            connection.commit()
+
+    def get_completed_rest_count(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        range_start = datetime.combine(start_date, datetime.min.time())
+        range_end = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM metric_snapshots
+                WHERE source = 'rest'
+                  AND recorded_at >= ?
+                  AND recorded_at < ?
+                """,
+                (
+                    range_start.isoformat(timespec="seconds"),
+                    range_end.isoformat(timespec="seconds"),
+                ),
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
+
     def get_dashboard_payload(
         self,
         period: str = "day",

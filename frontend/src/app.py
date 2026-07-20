@@ -20,6 +20,7 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QMovie, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QDateEdit,
     QFileDialog,
     QFrame,
@@ -109,6 +110,13 @@ class MonitoringMetricSample:
 
 _MONITORING_WINDOW_SECONDS = 12.0
 _MONITORING_MIN_SECONDS = 4.0
+_COMPANION_SIGNAL_SECONDS = 10.0
+_COMPANION_SIGNAL_MIN_SECONDS = 8.0
+_COMPANION_SIGNAL_RATIO = 0.75
+_COMPANION_RISK_CONFIRM_SECONDS = 6.0
+_COMPANION_FOCUS_CONFIRM_SECONDS = 8.0
+_COMPANION_RECOVERY_CONFIRM_SECONDS = 18.0
+_COMPANION_BUBBLE_DISPLAY_MS = 9000
 _ACTIVITY_PERIOD_SECONDS = 30.0
 _ACTIVITY_BASELINE_PERIODS = 10
 _ACTIVITY_SWITCH_WINDOW_SECONDS = 2.0
@@ -549,6 +557,7 @@ class PetAvatar(QLabel):
 class CompanionPetWindow(QWidget):
     toolbar_action_requested = Signal(str)
     chat_submitted = Signal(str)
+    rest_requested = Signal(int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -559,6 +568,8 @@ class CompanionPetWindow(QWidget):
         self._compact_size = QSize(280, 314)
         self._expanded_size = QSize(280, 344)
         self._chat_expanded_size = QSize(300, 482)
+        self._rest_controls_height = 38
+        self._bubble_extra_height = 0
         self.setFixedSize(self._compact_size)
 
         layout = QVBoxLayout(self)
@@ -595,14 +606,78 @@ class CompanionPetWindow(QWidget):
         self.marquee_label.hide()
         layout.addWidget(self.marquee_label)
 
-        self._marquee_source = ""
-        self._marquee_index = 0
-        self._marquee_timer = QTimer(self)
-        self._marquee_timer.setInterval(160)
-        self._marquee_timer.timeout.connect(self._advance_marquee)
+        self.rest_frame = QFrame()
+        self.rest_frame.setStyleSheet(
+            "background: rgba(255, 246, 224, 0.86);"
+            "border: 1px solid rgba(255, 255, 255, 0.88);"
+            "border-radius: 13px;"
+        )
+        rest_layout = QHBoxLayout(self.rest_frame)
+        rest_layout.setContentsMargins(7, 4, 7, 4)
+        rest_layout.setSpacing(6)
+        self.rest_duration_combo = QComboBox()
+        for minutes in (1, 3, 5, 10):
+            self.rest_duration_combo.addItem(f"休息 {minutes} 分钟", minutes)
+        self.rest_duration_combo.setCurrentIndex(2)
+        self.rest_duration_combo.setStyleSheet(
+            "QComboBox {"
+            "background: rgba(255, 255, 255, 0.72);"
+            "border: 1px solid rgba(191, 168, 119, 0.24);"
+            "border-radius: 9px;"
+            "padding: 4px 8px;"
+            "color: #7b6a4b;"
+            "font-size: 11px;"
+            "}"
+        )
+        self.rest_start_button = QPushButton("开始休息")
+        self.rest_start_button.setCursor(Qt.PointingHandCursor)
+        self.rest_start_button.setStyleSheet(
+            "QPushButton {"
+            "background: #e5a84b;"
+            "border: none;"
+            "border-radius: 9px;"
+            "padding: 5px 10px;"
+            "color: #fffdf7;"
+            "font-size: 11px;"
+            "font-weight: 700;"
+            "}"
+            "QPushButton:hover { background: #d69535; }"
+            "QPushButton:disabled { background: #d8c7a8; color: #fffaf0; }"
+        )
+        self.rest_start_button.clicked.connect(self._emit_rest_requested)
+        self.rest_close_button = QPushButton("×")
+        self.rest_close_button.setToolTip("暂不休息")
+        self.rest_close_button.setAccessibleName("关闭休息选择")
+        self.rest_close_button.setCursor(Qt.PointingHandCursor)
+        self.rest_close_button.setFixedSize(24, 24)
+        self.rest_close_button.setStyleSheet(
+            "QPushButton {"
+            "background: rgba(139, 112, 69, 0.10);"
+            "border: 1px solid rgba(139, 112, 69, 0.16);"
+            "border-radius: 12px;"
+            "color: #927c59;"
+            "font-size: 16px;"
+            "font-weight: 700;"
+            "padding: 0;"
+            "}"
+            "QPushButton:hover {"
+            "background: rgba(139, 112, 69, 0.20);"
+            "color: #6f5a39;"
+            "}"
+        )
+        self.rest_close_button.clicked.connect(self._dismiss_rest_prompt)
+        rest_layout.addWidget(self.rest_duration_combo, 1)
+        rest_layout.addWidget(self.rest_start_button)
+        rest_layout.addWidget(self.rest_close_button)
+        self.rest_frame.hide()
+        layout.addWidget(self.rest_frame)
+
         self._bubble_timer = QTimer(self)
         self._bubble_timer.setSingleShot(True)
-        self._bubble_timer.timeout.connect(self.bubble_label.hide)
+        self._bubble_timer.timeout.connect(self._hide_bubble)
+        self._rest_active = False
+        self._rest_mode_available = False
+        self._rest_prompt_dismissed = False
 
         self.avatar = PetAvatar(
             max_movie_size=QSize(220, 220),
@@ -624,7 +699,7 @@ class CompanionPetWindow(QWidget):
         chat_layout = QVBoxLayout(self.chat_frame)
         chat_layout.setContentsMargins(10, 9, 10, 10)
         chat_layout.setSpacing(6)
-        self.chat_hint_label = QLabel("和 EyeMuse 说句话")
+        self.chat_hint_label = QLabel("发送后，EyeMuse 会在上方气泡回复")
         self.chat_hint_label.setAlignment(Qt.AlignCenter)
         self.chat_hint_label.setStyleSheet(
             "color: #6e8db8;"
@@ -643,7 +718,7 @@ class CompanionPetWindow(QWidget):
         )
         self.chat_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.chat_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.chat_view.setHtml("<p style='color:#94a3b8; text-align:center;'>点一下“对话”，就在这里聊天。</p>")
+        self.chat_view.setHtml("<p style='color:#94a3b8; text-align:center;'>输入消息后，回复会显示在上方气泡中。</p>")
         self.chat_input = QLineEdit()
         self.chat_input.setPlaceholderText("直接输入文字，和 EyeMuse 对话")
         self.chat_input.setStyleSheet(
@@ -773,30 +848,33 @@ class CompanionPetWindow(QWidget):
         show_bubble: bool = True,
         auto_hide_ms: int = 0,
     ) -> None:
+        previous_mode = self._current_mode
         self._current_mode = mode_key
         normalized_text = bubble_text.strip()
         if show_bubble and normalized_text:
-            self.bubble_label.setText(normalized_text)
+            display_text = normalized_text
+            if len(display_text) > 260:
+                display_text = f"{display_text[:257]}..."
+            self.bubble_label.setText(display_text)
+            self.bubble_label.setToolTip(normalized_text if display_text != normalized_text else "")
             self.bubble_label.show()
             if auto_hide_ms > 0:
                 self._bubble_timer.start(auto_hide_ms)
             else:
                 self._bubble_timer.stop()
-        else:
+        elif mode_key != previous_mode:
             self._bubble_timer.stop()
             self.bubble_label.hide()
+            self.bubble_label.setToolTip("")
+            self._bubble_extra_height = 0
 
-        if marquee_text.strip():
-            padded = f"    {marquee_text.strip()}    "
-            self._marquee_source = padded + padded
-            self._marquee_index = 0
-            self.marquee_label.setText(marquee_text.strip())
+        status_text = marquee_text.strip()
+        if status_text:
+            self.marquee_label.setText(status_text)
             self.marquee_label.show()
-            self._marquee_timer.start()
         else:
-            self._marquee_timer.stop()
-            self._marquee_source = ""
             self.marquee_label.hide()
+        self.set_rest_mode_available(mode_key == "fatigue")
 
         bubble_styles = {
             "focus": (
@@ -828,17 +906,10 @@ class CompanionPetWindow(QWidget):
             + "font-size: 12px;"
             + "font-weight: 600;"
         )
-
-    def _advance_marquee(self) -> None:
-        if not self._marquee_source:
-            return
-        window_size = 22
-        source = self._marquee_source
-        rendered = source[self._marquee_index:self._marquee_index + window_size]
-        if len(rendered) < window_size:
-            rendered += source[:window_size - len(rendered)]
-        self.marquee_label.setText(rendered)
-        self._marquee_index = (self._marquee_index + 1) % max(1, len(source) // 2)
+        if show_bubble and normalized_text:
+            content_height = self.bubble_label.heightForWidth(max(180, self.width() - 32))
+            self._bubble_extra_height = max(0, min(220, content_height - 52))
+        self._apply_window_size()
 
     def _toggle_toolbar(self) -> None:
         visible = not self.toolbar_frame.isVisible()
@@ -849,11 +920,61 @@ class CompanionPetWindow(QWidget):
 
     def _apply_window_size(self) -> None:
         if self.chat_frame.isVisible():
-            self.setFixedSize(self._chat_expanded_size)
+            target_size = QSize(self._chat_expanded_size)
         elif self.toolbar_frame.isVisible():
-            self.setFixedSize(self._expanded_size)
+            target_size = QSize(self._expanded_size)
         else:
-            self.setFixedSize(self._compact_size)
+            target_size = QSize(self._compact_size)
+        if self.rest_frame.isVisible():
+            target_size.setHeight(target_size.height() + self._rest_controls_height)
+        target_size.setHeight(target_size.height() + self._bubble_extra_height)
+        self.setFixedSize(target_size)
+
+    def _hide_bubble(self) -> None:
+        self.bubble_label.hide()
+        self.bubble_label.setToolTip("")
+        self._bubble_extra_height = 0
+        self._apply_window_size()
+
+    def _emit_rest_requested(self) -> None:
+        if self._rest_active:
+            return
+        duration_minutes = int(self.rest_duration_combo.currentData() or 5)
+        self.rest_requested.emit(duration_minutes)
+
+    def _dismiss_rest_prompt(self) -> None:
+        if self._rest_active:
+            return
+        self._rest_prompt_dismissed = True
+        self.rest_frame.hide()
+        self._apply_window_size()
+
+    def set_rest_mode_available(self, available: bool) -> None:
+        if not available or (available and not self._rest_mode_available):
+            self._rest_prompt_dismissed = False
+        self._rest_mode_available = available
+        self.rest_close_button.setVisible(available and not self._rest_active)
+        self.rest_frame.setVisible(
+            self._rest_active or (available and not self._rest_prompt_dismissed)
+        )
+        self._apply_window_size()
+
+    def set_rest_progress(self, active: bool, remaining_seconds: int = 0) -> None:
+        self._rest_active = active
+        self.rest_duration_combo.setEnabled(not active)
+        self.rest_start_button.setEnabled(not active)
+        self.rest_close_button.setVisible(
+            not active and self._rest_mode_available and not self._rest_prompt_dismissed
+        )
+        if active:
+            minutes, seconds = divmod(max(0, remaining_seconds), 60)
+            self.rest_start_button.setText(f"休息中 {minutes:02d}:{seconds:02d}")
+        else:
+            self.rest_start_button.setText("开始休息")
+        self.rest_frame.setVisible(
+            active or (self._rest_mode_available and not self._rest_prompt_dismissed)
+        )
+        self._apply_window_size()
 
     def set_camera_enabled(self, enabled: bool) -> None:
         camera_button = self._toolbar_buttons.get("camera")
@@ -1320,10 +1441,19 @@ class EyeMuseWindow(QMainWindow):
         self._report_payload_key = ""
         self._streaming_reply_index: Optional[int] = None
         self._streaming_user_text: str = ""
+        self._streaming_from_companion = False
         self._current_pet_mood = PetMood.idle
         self._current_pet_hint = "等待用户输入，或开启摄像头观察状态变化。"
         self._current_companion_mode = "idle"
+        self._companion_mode_since = time.monotonic()
+        self._companion_candidate_mode = "idle"
+        self._companion_candidate_since = self._companion_mode_since
         self._companion_window: Optional[CompanionPetWindow] = None
+        self._rest_duration_seconds = 0
+        self._rest_started_at = 0.0
+        self._rest_timer = QTimer(self)
+        self._rest_timer.setInterval(1000)
+        self._rest_timer.timeout.connect(self._update_rest_countdown)
         self._dashboard_refresh_timer = QTimer(self)
         self._dashboard_refresh_timer.setSingleShot(True)
         self._dashboard_refresh_timer.setInterval(2000)
@@ -3487,11 +3617,16 @@ class EyeMuseWindow(QMainWindow):
         if self._report_refresh_timer.isActive():
             self._report_refresh_timer.stop()
         today = QDate.currentDate().addDays(-1).toPython()
+        current_date = QDate.currentDate().toPython()
         week_start = QDate.currentDate().addDays(-7).toPython()
         week_end = QDate.currentDate().addDays(-1).toPython()
 
         if self._dashboard_repository is not None:
             daily_summary = self._dashboard_repository.get_report_summary(start_date=today, end_date=today)
+            current_rest_count = self._dashboard_repository.get_completed_rest_count(
+                start_date=current_date,
+                end_date=current_date,
+            )
             if self._report_custom_mode:
                 custom_start, custom_end = self._report_custom_range
                 period_summary = self._dashboard_repository.get_report_summary(start_date=custom_start, end_date=custom_end)
@@ -3504,6 +3639,7 @@ class EyeMuseWindow(QMainWindow):
         else:
             daily_summary = {}
             period_summary = {}
+            current_rest_count = 0
             period_title = "情绪健康周报"
             period_mode = "周维度长期价值复盘"
 
@@ -3517,6 +3653,7 @@ class EyeMuseWindow(QMainWindow):
                 "custom_mode": self._report_custom_mode,
                 "period_title": period_title,
                 "period_mode": period_mode,
+                "current_rest_count": current_rest_count,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -3530,7 +3667,10 @@ class EyeMuseWindow(QMainWindow):
         self.report_custom_apply_button.style().unpolish(self.report_custom_apply_button)
         self.report_custom_apply_button.style().polish(self.report_custom_apply_button)
         self.daily_avg_stress_card.setValue(f"{daily_summary.get('average_stress', 0)}")
-        self.daily_rest_count_card.setValue(f"{daily_summary.get('rest_activity_count', 0)} 次")
+        visible_rest_count = int(daily_summary.get("rest_activity_count", 0) or 0)
+        if current_date != today:
+            visible_rest_count += current_rest_count
+        self.daily_rest_count_card.setValue(f"{visible_rest_count} 次")
         self.daily_focus_index_card.setValue(f"{daily_summary.get('average_focus', 0)} / 100")
 
         daily_title = "每日健康分析报告"
@@ -4423,7 +4563,7 @@ class EyeMuseWindow(QMainWindow):
         self._refresh_conversation()
 
         if self._llm_client is not None and getattr(self._llm_client, "configured", False):
-            self._start_streaming_reply(text)
+            self._start_streaming_reply(text, from_companion=from_companion)
             return
 
         reply = self._generate_local_reply(text)
@@ -4431,21 +4571,26 @@ class EyeMuseWindow(QMainWindow):
         self._conversation.append(ConversationItem("eyeMuse", reply, self._now()))
         self._refresh_conversation()
         self._set_mood(PetMood.idle, reply)
+        if from_companion:
+            self._show_companion_message(reply)
 
     def _handle_send(self) -> None:
         self._submit_user_text(self.message_input.text(), from_companion=False)
 
-    def _start_streaming_reply(self, text: str) -> None:
+    def _start_streaming_reply(self, text: str, *, from_companion: bool = False) -> None:
         if self._llm_client is None:
             return
 
         self._streaming_user_text = text
+        self._streaming_from_companion = from_companion
         self._conversation.append(ConversationItem("eyeMuse", "", self._now()))
         self._streaming_reply_index = len(self._conversation) - 1
         self._refresh_conversation()
         self._set_chat_busy(True)
         self._set_mood(PetMood.responding, "正在流式生成回应。")
         self.event_card.setValue("LLM 流式输出中")
+        if from_companion:
+            self._show_companion_message("我正在整理回复，请稍等一下。")
 
         self._llm_thread = QThread(self)
         self._llm_worker = LLMStreamWorker(
@@ -4476,12 +4621,16 @@ class EyeMuseWindow(QMainWindow):
     def _finish_streaming_reply(self, final_text: str) -> None:
         if self._streaming_reply_index is not None:
             self._conversation[self._streaming_reply_index].text = final_text or self._conversation[self._streaming_reply_index].text
+        reply_text = final_text or "回复已完成。"
         self._refresh_conversation()
-        self._set_mood(PetMood.idle, final_text or "回复已完成。")
+        self._set_mood(PetMood.idle, reply_text)
+        if self._streaming_from_companion:
+            self._show_companion_message(reply_text)
         self._teardown_streaming_reply()
 
     def _handle_streaming_error(self, message: str) -> None:
         partial = ""
+        reply_text = "回复暂时中断，请稍后再试。"
         if self._streaming_reply_index is not None:
             partial = self._conversation[self._streaming_reply_index].text.strip()
 
@@ -4489,13 +4638,17 @@ class EyeMuseWindow(QMainWindow):
             fallback = self._generate_local_reply(self._streaming_user_text)
             self._conversation[self._streaming_reply_index].text = fallback
             self._set_mood(PetMood.idle, fallback)
+            reply_text = fallback
         elif self._streaming_reply_index is not None:
             self._conversation[self._streaming_reply_index].text += "\n\n[回复中断]"
             self._set_mood(PetMood.alert, "流式回复中断。")
+            reply_text = f"{partial}\n\n回复暂时中断。"
 
         self.event_card.setValue(f"LLM 回退到本地回复：{message}")
         self.camera_note.setText(f"LLM 流式调用异常：{message}")
         self._refresh_conversation()
+        if self._streaming_from_companion:
+            self._show_companion_message(reply_text)
         self._teardown_streaming_reply()
 
     def _teardown_streaming_reply(self) -> None:
@@ -4506,6 +4659,7 @@ class EyeMuseWindow(QMainWindow):
         self._llm_worker = None
         self._streaming_reply_index = None
         self._streaming_user_text = ""
+        self._streaming_from_companion = False
         self._set_chat_busy(False)
 
     def _set_chat_busy(self, busy: bool) -> None:
@@ -4581,12 +4735,90 @@ class EyeMuseWindow(QMainWindow):
         self._refresh_conversation()
         self._append_system_message("会话已清空。")
 
-    def _build_companion_feedback(self) -> dict[str, str]:
-        hint = self._current_pet_hint.strip() or "陪伴模式已开启。"
+    def _sustained_companion_signal(self) -> str:
         behavior_state = str(self._behavior_summary.get("behavior_state", "warming"))
-        emotion = self._emotion_tendency()
+        if behavior_state == "fatigued":
+            return "fatigue"
+        if behavior_state == "anxious":
+            return "soothe"
 
-        if self._local_camera_enabled and self._face_count > 0 and emotion in {"专注", "平稳"} and self._stress_score < 55 and self._fatigue_score < 55:
+        now = time.monotonic()
+        cutoff = now - _COMPANION_SIGNAL_SECONDS
+        samples = [sample for sample in self._monitoring_samples if sample.captured_at >= cutoff]
+        if len(samples) < 2:
+            return "idle"
+
+        sample_span = samples[-1].captured_at - samples[0].captured_at
+        if sample_span < _COMPANION_SIGNAL_MIN_SECONDS:
+            return "idle"
+
+        sample_count = len(samples)
+        fatigue_ratio = sum(sample.fatigue_score >= 70 for sample in samples) / sample_count
+        stress_ratio = sum(sample.stress_score >= 70 for sample in samples) / sample_count
+        focus_ratio = sum(
+            sample.stress_score < 55 and sample.fatigue_score < 55
+            for sample in samples
+        ) / sample_count
+
+        if fatigue_ratio >= _COMPANION_SIGNAL_RATIO:
+            return "fatigue"
+        if stress_ratio >= _COMPANION_SIGNAL_RATIO:
+            return "soothe"
+        if (
+            self._local_camera_enabled
+            and self._face_count > 0
+            and focus_ratio >= _COMPANION_SIGNAL_RATIO
+        ):
+            return "focus"
+        return "idle"
+
+    def _stable_companion_mode(self) -> str:
+        now = time.monotonic()
+        signal_mode = self._sustained_companion_signal()
+        current_mode = self._current_companion_mode
+
+        if signal_mode == current_mode:
+            self._companion_candidate_mode = current_mode
+            self._companion_candidate_since = now
+            return current_mode
+
+        if signal_mode != self._companion_candidate_mode:
+            self._companion_candidate_mode = signal_mode
+            self._companion_candidate_since = now
+            return current_mode
+
+        confirmation_seconds = _COMPANION_FOCUS_CONFIRM_SECONDS
+        if signal_mode in {"fatigue", "soothe"}:
+            confirmation_seconds = _COMPANION_RISK_CONFIRM_SECONDS
+
+        if current_mode in {"fatigue", "soothe"} and signal_mode not in {"fatigue", "soothe"}:
+            confirmation_seconds = _COMPANION_RECOVERY_CONFIRM_SECONDS
+        elif current_mode == "rest":
+            confirmation_seconds = _COMPANION_BUBBLE_DISPLAY_MS / 1000.0
+
+        if now - self._companion_candidate_since < confirmation_seconds:
+            return current_mode
+
+        self._companion_mode_since = now
+        self._companion_candidate_mode = signal_mode
+        self._companion_candidate_since = now
+        return signal_mode
+
+    def _build_companion_feedback(self) -> dict[str, str]:
+        if self._rest_timer.isActive():
+            mode = "rest"
+        else:
+            mode = self._stable_companion_mode()
+
+        if mode == "rest":
+            return {
+                "mode": "rest",
+                "bubble": "",
+                "marquee": "休息中，安心放松" if self._rest_timer.isActive() else "",
+                "show_bubble": False,
+            }
+
+        if mode == "focus":
             return {
                 "mode": "focus",
                 "bubble": "专注模式已开启，我会尽量降低打扰，只保留必要提醒。",
@@ -4594,7 +4826,7 @@ class EyeMuseWindow(QMainWindow):
                 "show_bubble": True,
             }
 
-        if self._fatigue_score >= 72 or behavior_state == "fatigued":
+        if mode == "fatigue":
             urgent = self._fatigue_score >= 85
             bubble = "你连续工作有一阵了，眼睛需要休息哦。要不要我带你做 30 秒深呼吸？"
             if urgent:
@@ -4606,7 +4838,7 @@ class EyeMuseWindow(QMainWindow):
                 "show_bubble": True,
             }
 
-        if self._stress_score >= 72 or behavior_state == "anxious" or emotion == "焦虑":
+        if mode == "soothe":
             return {
                 "mode": "soothe",
                 "bubble": "感觉你有点烦躁，需要我陪你聊聊天吗？我也可以先讲个轻松的小笑话。",
@@ -4645,7 +4877,7 @@ class EyeMuseWindow(QMainWindow):
             bubble_text=payload["bubble"],
             marquee_text=payload["marquee"],
             show_bubble=bool(payload.get("show_bubble", True)) and payload["mode"] != previous_mode,
-            auto_hide_ms=4200 if payload["mode"] != previous_mode else 0,
+            auto_hide_ms=_COMPANION_BUBBLE_DISPLAY_MS if payload["mode"] != previous_mode else 0,
         )
         if payload["mode"] != previous_mode:
             auto_text = self._auto_companion_action_text(payload["mode"])
@@ -4660,11 +4892,70 @@ class EyeMuseWindow(QMainWindow):
                 bubble_text=self._current_pet_hint,
                 marquee_text="正在专注中，不打扰" if self._current_companion_mode == "focus" else "",
                 show_bubble=True,
-                auto_hide_ms=3800,
+                auto_hide_ms=_COMPANION_BUBBLE_DISPLAY_MS,
             )
         if hasattr(self, "event_card"):
             self.event_card.setValue(self._current_pet_hint)
         self.statusBar().showMessage(self._current_pet_hint, 3200)
+
+    def _start_rest(self, duration_minutes: int) -> None:
+        if self._rest_timer.isActive():
+            return
+        duration_minutes = max(1, min(60, int(duration_minutes)))
+        self._rest_duration_seconds = duration_minutes * 60
+        self._rest_started_at = time.monotonic()
+        self._current_companion_mode = "rest"
+        self._companion_mode_since = self._rest_started_at
+        self._companion_candidate_mode = "rest"
+        self._companion_candidate_since = self._rest_started_at
+        self._rest_timer.start()
+        if self._companion_window is not None:
+            self._companion_window.set_rest_progress(True, self._rest_duration_seconds)
+        self._show_companion_message(
+            f"休息计时已开始。接下来的 {duration_minutes} 分钟先离开屏幕、活动一下，到时我会提醒你。"
+        )
+
+    def _update_rest_countdown(self) -> None:
+        if self._rest_duration_seconds <= 0:
+            self._rest_timer.stop()
+            return
+        elapsed_seconds = time.monotonic() - self._rest_started_at
+        remaining_seconds = max(0, math.ceil(self._rest_duration_seconds - elapsed_seconds))
+        if self._companion_window is not None:
+            self._companion_window.set_rest_progress(True, remaining_seconds)
+        if remaining_seconds <= 0:
+            self._finish_rest()
+
+    def _finish_rest(self) -> None:
+        if self._rest_duration_seconds <= 0:
+            return
+        completed_duration = self._rest_duration_seconds
+        self._rest_timer.stop()
+        self._rest_duration_seconds = 0
+        self._rest_started_at = 0.0
+        if self._companion_window is not None:
+            self._companion_window.set_rest_progress(False)
+
+        duration_minutes = max(1, round(completed_duration / 60))
+        completion_text = (
+            f"{duration_minutes} 分钟休息完成，辛苦啦。先眨眨眼、活动肩颈，再决定是否继续当前任务。"
+        )
+        self._append_system_message(completion_text)
+        self._show_companion_message(completion_text)
+
+        snapshot = self._build_realtime_snapshot()
+        if self._dashboard_repository is not None and snapshot is not None:
+            try:
+                self._dashboard_repository.record_rest_activity(
+                    snapshot,
+                    duration_seconds=completed_duration,
+                )
+            except Exception as exc:
+                self.statusBar().showMessage(f"休息已完成，但统计记录失败：{exc}", 5000)
+            else:
+                self._dashboard_payload_key = ""
+                self._report_payload_key = ""
+                self._schedule_analytics_refresh()
 
     def _handle_companion_chat_submit(self, text: str) -> None:
         self._submit_user_text(text, from_companion=True)
@@ -4714,6 +5005,7 @@ class EyeMuseWindow(QMainWindow):
             self._companion_window = CompanionPetWindow()
             self._companion_window.toolbar_action_requested.connect(self._handle_companion_toolbar_action)
             self._companion_window.chat_submitted.connect(self._handle_companion_chat_submit)
+            self._companion_window.rest_requested.connect(self._start_rest)
         self._companion_window.setMood(self._current_pet_mood)
         self._companion_window.set_camera_enabled(self._local_camera_enabled)
         self._companion_window.set_chat_busy(self._llm_thread is not None)
@@ -5024,6 +5316,7 @@ class EyeMuseWindow(QMainWindow):
         return QDateTime.currentDateTime().toString("hh:mm:ss")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._rest_timer.stop()
         if self._llm_thread is not None:
             self._teardown_streaming_reply()
         if self._activity_monitor is not None:
